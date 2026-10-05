@@ -268,8 +268,15 @@ export function initViewer(canvas) {
   scene.add(_pivotMarker);
 
   // Surface point under the given client coords, else the last pivot, else null.
+  // Personal: with Settings > Rotate around > Model centre, always the middle
+  // of the model's bounding box instead.
   function _pickPivot(clientX, clientY) {
     if (!currentMesh) return null;
+    if (_orbitPivotMode === 'center') {
+      const geo = currentMesh.geometry;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      return geo.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(currentMesh.matrixWorld);
+    }
     const rect = renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width)  *  2 - 1,
@@ -1073,6 +1080,13 @@ export function setProjection(perspective) {
 export function setSceneBackground(hexColor) {
   if (scene) scene.background = new THREE.Color(hexColor);
   requestRender();
+}
+
+// Personal: what a drag orbits around: 'surface' (the point pressed on, the
+// default) or 'center' (the model's bounding-box centre). pdsSettings.js sets it.
+let _orbitPivotMode = 'surface';
+export function setOrbitPivotMode(mode) {
+  _orbitPivotMode = mode === 'center' ? 'center' : 'surface';
 }
 
 // Personal: a CSS custom property as a 0xRRGGBB number (panel-look.css sets

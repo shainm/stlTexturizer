@@ -14,6 +14,8 @@
  *    (--theme-color; panel-look.css derives the
  *    accent, hover and glow from it), Dark / Light (drives main.js's hidden
  *    #theme-toggle so the viewer follows), Language (main.js fills .lang-seg).
+ *  - 3D view: Rotate around the point pressed on (the default) or the
+ *    model's centre (viewer.js setOrbitPivotMode).
  *  - Profiles: named sets of settings, kept in this browser (IndexedDB). A
  *    profile is the settings-only .bumpmesh the Export already writes as
  *    "_shared settings" (no model, no paint), so loading one is a
@@ -36,13 +38,14 @@
  *    (setViewInset), so the model centres in what's left.
  */
 
-import { setViewInset, setViewerTheme } from './viewer.js';
+import { setViewInset, setViewerTheme, setOrbitPivotMode } from './viewer.js';
 
 const LS = 'bm-pds-';
 const ACCENT_KEY = LS + 'accent';          // also read by index.html's pre-paint script
 const DEFAULT_KEY = LS + 'default-profile';
 const STYLE_KEY = LS + 'style';              // also read by index.html: gradient (default) | matte | glass
 const MODEL_COLORS_KEY = LS + 'model-colors';  // theme (default) | material
+const PIVOT_KEY = LS + 'pivot';              // surface (default) | center
 const DEFAULT_ACCENT = '#4a84c4';
 
 // The tray panels' accents, plus BumpMesh's own purple.
@@ -196,6 +199,27 @@ function initModelColors() {
     if (!b) return;
     lsSet(MODEL_COLORS_KEY, b.dataset.mode === 'material' ? 'material' : null);
     window.dispatchEvent(new CustomEvent('pds-model-colors'));   // personal.js initColours
+    sync();
+  });
+  sync();
+}
+
+// 3D view > Rotate around: the point pressed on, or the model's centre.
+function initPivot() {
+  const seg = $('pds-pivot-seg');
+  const mode = () => (lsGet(PIVOT_KEY, 'surface') === 'center' ? 'center' : 'surface');
+  const sync = () => {
+    setOrbitPivotMode(mode());
+    for (const b of seg.querySelectorAll('button')) {
+      const on = b.dataset.pivot === mode();
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-pivot]');
+    if (!b) return;
+    lsSet(PIVOT_KEY, b.dataset.pivot === 'center' ? 'center' : null);
     sync();
   });
   sync();
@@ -628,6 +652,7 @@ export function initSettingsMenu(app) {
   initStyle();
   initAppearance();
   initModelColors();
+  initPivot();
   refreshViewer();   // the 3D view in the saved style's colours
   const profiles = initProfiles(app, toast);
   const menu = initMenu(() => profiles.render());

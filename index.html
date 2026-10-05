@@ -131,6 +131,17 @@
       </section>
 
       <section class="pds-group panel-section">
+        <h2>3D view</h2>
+        <div class="pds-row">
+          <span class="pds-label">Rotate around</span>
+          <div id="pds-pivot-seg" class="excl-seg" role="group" aria-label="Rotate around">
+            <button type="button" class="excl-seg-btn" data-pivot="surface" title="Dragging turns the view around the point of the model you pressed on">Clicked point</button>
+            <button type="button" class="excl-seg-btn" data-pivot="center" title="Dragging always turns the view around the middle of the model, wherever you press">Model centre</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="pds-group panel-section">
         <h2>Profiles</h2>
         <p class="pds-hint">A profile keeps every setting in the sidebar: layers, textures, projection, masking angles and export. Loading one keeps your model and its painted surfaces.</p>
         <div id="pds-profile-list" class="pds-profile-list"></div>
