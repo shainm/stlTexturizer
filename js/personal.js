@@ -14,10 +14,10 @@
  *      · Load Model / Load project open a native picker, so the file's real
  *        location is known;
  *      · one Export button writes, into a job folder (each item optional):
- *          textured\<name>_<textures>.3mf|.stl
- *          project files\<name>.bumpmesh            settings + selections + model
- *          project files\_shared settings.bumpmesh  settings for every model here
- *          Original\<original file>                 copied or moved there
+ *          Textured\<name>_<textures>.3mf|.stl
+ *          Texture Settings\<name>.bumpmesh            settings + selections + model
+ *          Texture Settings\_shared settings.bumpmesh  settings for every model here
+ *          Original\<original file>                    copied or moved there
  *        and, when <name> already exists there, archives the old files into
  *        Archive\<name> <last edit time>\ before replacing them;
  *      · opening a model from a job folder offers its saved project, else the
@@ -88,7 +88,9 @@ const basename = (p) => p.replace(/^.*[\\/]/, '');
 const stem = (n) => n.replace(/\.[^.]+$/, '');
 const safe = (s) => String(s).replace(/\.(png|jpe?g|webp|bmp|gif|tiff?)$/i, '')
   .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'texture';
-const SUB = { textured: 'textured', project: 'project files', original: 'Original', archive: 'Archive' };
+const SUB = { textured: 'Textured', project: 'Texture Settings', original: 'Original', archive: 'Archive' };
+// Earlier exports named the settings folder "project files"; still read from it.
+const LEGACY_PROJECT = 'project files';
 
 function stamp(ms) {
   const d = new Date(ms), z = (n) => String(n).padStart(2, '0');
@@ -106,10 +108,11 @@ const state = {
   align: null,          // { assembly: path, frame: {min,size}, offset: {x,y,z} } for the loaded model
 };
 
-/** A model/project opened from <dest>\Original\ or <dest>\project files\ belongs to <dest>. */
+/** A model/project opened from <dest>\Original\ or <dest>\Texture Settings\ belongs to <dest>. */
 function adoptLocation(path) {
   const dir = dirname(path), up = basename(dir).toLowerCase();
-  state.dest = (up === SUB.original.toLowerCase() || up === SUB.project.toLowerCase()) ? dirname(dir) : dir;
+  const job = [SUB.original, SUB.project, LEGACY_PROJECT].some(n => n.toLowerCase() === up);
+  state.dest = job ? dirname(dir) : dir;
 }
 
 // ── UI helpers ──────────────────────────────────────────────────────────────
@@ -689,9 +692,12 @@ async function openModel(app, path) {
   adoptLocation(path);
 
   // Recognise the job folder: this model's own project, else shared settings.
-  const own = join(state.dest, SUB.project, `${safe(state.name)}.bumpmesh`);
-  const shared = join(state.dest, SUB.project, SHARED_FILE);
-  const [o, s] = await stat([own, shared]);
+  const pick = async (file) => {
+    const [n, l] = await stat([join(state.dest, SUB.project, file), join(state.dest, LEGACY_PROJECT, file)]);
+    return n.exists ? n : l;
+  };
+  const o = await pick(`${safe(state.name)}.bumpmesh`), s = await pick(SHARED_FILE);
+  const own = o.path, shared = s.path;
   if (o.exists) {
     const c = await modal('Saved project found',
       el('p', {}, `${basename(own)} (saved ${new Date(o.mtime * 1000).toLocaleString()}) has this model's settings and selections. Open it?`),
