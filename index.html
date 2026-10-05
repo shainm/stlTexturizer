@@ -429,6 +429,20 @@
           <input type="range" id="amplitude" min="0" max="2" step="0.01" value="0.5" />
           <input type="number" class="val" id="amplitude-val" value="0.5" min="0" max="100" step="0.01" data-wheel-decimals="2" />
         </div>
+        <!-- PDS edition: tops/bottoms (Z) get their own height (was the 3D Print Settings card) -->
+        <div class="form-row">
+          <label class="checkbox-label" for="print-z-chk"
+            title="Use a different texture height on surfaces facing up or down (Z) than on walls (X/Y). Slopes blend between the two.">
+            <input type="checkbox" id="print-z-chk" />
+            <span>Different height on tops/bottoms (Z) ⓘ</span>
+          </label>
+        </div>
+        <div class="form-row slider-row">
+          <label for="print-z-scale" title="Texture height on surfaces facing straight up or down, as a multiple of the Texture height (which applies to vertical walls).">Z height ×</label>
+          <input type="range" id="print-z-scale" min="0.25" max="5" step="0.05" value="2" />
+          <input type="number" class="val" id="print-z-scale-val" value="2" min="0.05" max="20" step="0.05" data-wheel-decimals="2" />
+        </div>
+        <p id="print-z-readout" class="advanced-blurb" hidden></p>
         <div class="form-row">
           <label class="checkbox-label" for="invert-displacement">
             <input type="checkbox" id="invert-displacement" />
@@ -457,25 +471,6 @@
           <span id="displacement-preview-spinner" class="mesh-diag-spinner hidden"
             data-i18n-title="progress.subdividingPreview" title="Preparing preview…"></span>
         </div>
-      </section>
-
-      <!-- 3D Print Settings (PDS edition) -->
-      <section class="panel-section">
-        <h2>3D Print Settings</h2>
-        <p class="advanced-blurb">The part is textured in the orientation it prints in. Walls get their texture from the nozzle's X/Y moves, so a small height already shows. Tops, bottoms and shallow slopes are built from layers and need more height to show. Keeping the walls low saves print time.</p>
-        <div class="form-row">
-          <label class="checkbox-label" for="print-z-chk"
-            title="Use a different texture height on surfaces facing up or down (Z) than on walls (X/Y). Slopes blend between the two.">
-            <input type="checkbox" id="print-z-chk" />
-            <span>Different height on tops/bottoms (Z) ⓘ</span>
-          </label>
-        </div>
-        <div class="form-row slider-row">
-          <label for="print-z-scale" title="Texture height on surfaces facing straight up or down, as a multiple of the Texture height (which applies to vertical walls).">Z height ×</label>
-          <input type="range" id="print-z-scale" min="0.25" max="5" step="0.05" value="2" />
-          <input type="number" class="val" id="print-z-scale-val" value="2" min="0.05" max="20" step="0.05" data-wheel-decimals="2" />
-        </div>
-        <p id="print-z-readout" class="advanced-blurb"></p>
       </section>
 
       <!-- Transform -->
