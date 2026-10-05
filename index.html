@@ -145,6 +145,41 @@
         <p class="pds-hint">The default settings: a new session starts with them, and Reset goes back to them.</p>
       </section>
 
+      <section class="pds-group pds-beta">
+        <h3>Beta features</h3>
+        <p class="pds-hint" data-i18n="ui.advancedBlurb">Experimental tools. Behavior may change between releases.</p>
+        <div class="pds-beta-item" id="pds-beta-overhang">
+          <h4 class="pds-beta-name" data-i18n="ui.noDownwardZHeading">Overhang Protection</h4>
+          <p class="pds-hint" data-i18n="ui.noDownwardZDesc">Some textures push surface vertices downward, creating new overhangs. When enabled, vertices are never moved in the âˆ’Z direction during texturing. X and Y movement is unaffected.</p>
+          <p class="pds-beta-where">In Texture Depth.</p>
+        </div>
+        <div class="pds-beta-item" id="pds-beta-smoothbottom">
+          <h4 class="pds-beta-name" data-i18n="ui.smoothBottomHeading">Smooth Bottom</h4>
+          <p class="pds-hint" data-i18n="ui.smoothBottomDesc">Snap any vertex within 0.1 mm of the bottom plane onto it after texturing. Keeps the bed-contact surface perfectly flat so slicers don't shade tiny height variations on bottom slivers.</p>
+          <p class="pds-beta-where">In Masking, under Bottom faces.</p>
+        </div>
+        <div class="pds-beta-item" id="pds-beta-preserve">
+          <h4 class="pds-beta-name" data-i18n="ui.preserveUntexturedHeading">Preserve Untextured Surfaces</h4>
+          <p class="pds-hint" data-i18n="ui.preserveUntexturedDesc">Keep surfaces that receive no texture (painted mask, angle masks) exactly as they are in the source model: mesh regularization, decimation and Smooth Bottom leave them alone, and the export writes their original triangles back exactly, stitching the textured surface onto their edges (where the texture meets them, a triangle may be split at points on its own edge, which keeps its shape). Fillets and fine details stay intact. If the untextured surfaces alone exceed the triangle limit, the export exceeds the limit instead of degrading the texture.</p>
+          <p class="pds-beta-where">In Masking, under Untextured surfaces.</p>
+        </div>
+        <div class="pds-beta-item" id="pds-beta-flush">
+          <h4 class="pds-beta-name" data-i18n="ui.extendUntexturedHeading">Flush Edges</h4>
+          <p class="pds-hint" data-i18n="ui.extendUntexturedDesc">Make the texture end flush with flat untextured faces, as if each face were extended out through the texture: texture next to a flat face never rises past its level (bumps there are cut off flat), and where the texture pushes the surface out, the flat face is continued outward to meet it. On the bed this brings textured walls straight down onto the plate instead of hanging over it. The untextured faces themselves are not changed. Applied on export; the preview doesn't show it.</p>
+          <p class="pds-beta-where">In Masking, under Untextured surfaces.</p>
+        </div>
+        <div class="pds-beta-item" id="pds-beta-harvest">
+          <h4 class="pds-beta-name" data-i18n="ui.harvestFlatHeading">Harvest Flat Faces</h4>
+          <p class="pds-hint" data-i18n="ui.harvestFlatDesc">When decimation reaches the triangle limit there are often still flat faces left that cost almost nothing to remove. With this on, decimation keeps collapsing them past the limit â€” as long as each collapse moves the surface less than the tolerance below â€” saving extra triangles without losing visible detail.</p>
+          <p class="pds-beta-where">In Export, under Output Triangles.</p>
+        </div>
+        <div class="pds-beta-item" id="pds-beta-bake">
+          <h4 class="pds-beta-name" data-i18n="ui.bakeTexturesHeading">Bake Textures</h4>
+          <p class="pds-hint" data-i18n="ui.bakeTexturesDesc">Apply the current texture to the mesh and reload the result as the working model so you can keep editing.</p>
+          <p class="pds-beta-where">In Export, under the export buttons.</p>
+        </div>
+      </section>
+
       <section class="pds-group pds-support">
         <h3>Support &amp; about</h3>
         <p class="pds-hint">BumpMesh is made free by CNC Kitchen. Support them:</p>
@@ -462,6 +497,12 @@
           </label>
         </div>
         <div class="form-row">
+          <label class="checkbox-label" for="no-downward-z-chk">
+            <input type="checkbox" id="no-downward-z-chk" />
+            <span data-i18n="ui.noDownwardZ">Prevent downward (âˆ’Z) vertex displacement</span> <button type="button" class="beta-badge" data-beta="overhang" title="Beta: what it does is in Settings &gt; Beta features">Beta</button>
+          </label>
+        </div>
+        <div class="form-row">
           <label class="checkbox-label" for="displacement-preview"
             data-i18n-title="tooltips.displacementPreview"
             title="Subdivides the mesh and displaces vertices in real-time so you can judge the actual depth. GPU-intensive on complex models.">
@@ -526,6 +567,12 @@
           <label for="bottom-angle-limit" data-i18n="labels.bottomFaces" data-i18n-title="tooltips.bottomFaces" title="Suppress texture on downward-facing surfaces within this angle of horizontal">Bottom faces</label>
           <input type="range" id="bottom-angle-limit" min="0" max="90" step="1" value="5" />
           <input type="number" class="val" id="bottom-angle-limit-val" value="5" min="0" max="90" step="1" />
+        </div>
+        <div class="form-row" id="smooth-bottom-row">
+          <label class="checkbox-label" for="smooth-bottom-chk">
+            <input type="checkbox" id="smooth-bottom-chk" checked />
+            <span data-i18n="ui.smoothBottom">Snap near-bottom vertices to the bottom plane</span> <button type="button" class="beta-badge" data-beta="smoothbottom" title="Beta: what it does is in Settings &gt; Beta features">Beta</button>
+          </label>
         </div>
         <div class="form-row slider-row">
           <label for="top-angle-limit" data-i18n="labels.topFaces" data-i18n-title="tooltips.topFaces" title="Suppress texture on upward-facing surfaces within this angle of horizontal">Top faces</label>
@@ -639,94 +686,31 @@
           </div>
         </div>
 
+        <h3 class="panel-subsection-heading">Untextured surfaces</h3>
+        <div class="form-row">
+          <label class="checkbox-label" for="preserve-untextured-chk">
+            <input type="checkbox" id="preserve-untextured-chk" checked />
+            <span data-i18n="ui.preserveUntextured">Don't modify untextured surfaces</span> <button type="button" class="beta-badge" data-beta="preserve" title="Beta: what it does is in Settings &gt; Beta features">Beta</button>
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label" for="extend-untextured-chk">
+            <input type="checkbox" id="extend-untextured-chk" checked />
+            <span data-i18n="ui.extendUntextured">Extend flat untextured faces through the texture</span> <button type="button" class="beta-badge" data-beta="flush" title="Beta: what it does is in Settings &gt; Beta features">Beta</button>
+          </label>
+        </div>
+
+        <!-- Debug: stats for last picked triangle (sliver/edge-length investigation) -->
+        <pre id="masking-tri-debug" class="masking-tri-debug" hidden></pre>
+
       </section>
 
-      <!-- Advanced / Beta Features (collapsible) -->
-      <section class="panel-section advanced-section collapsed" id="advanced-section">
-        <h2 class="advanced-toggle" id="advanced-toggle"
-            data-i18n="sections.advancedFeatures"
-            data-i18n-title="tooltips.advancedFeatures"
-            title="Experimental tools â€” behavior may change between releases.">
-          <span class="advanced-chevron" aria-hidden="true">â–¸</span>
-          Advanced / Beta Features â“˜
-        </h2>
-        <div class="advanced-content" id="advanced-content">
-          <p class="advanced-blurb" data-i18n="ui.advancedBlurb">Experimental tools. Behavior may change between releases.</p>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.noDownwardZHeading">Overhang Protection</h3>
-          <p class="advanced-blurb" data-i18n="ui.noDownwardZDesc">Some textures push surface vertices downward, creating new overhangs. When enabled, vertices are never moved in the âˆ’Z direction during texturing. X and Y movement is unaffected.</p>
-          <div class="form-row">
-            <label class="checkbox-label" for="no-downward-z-chk">
-              <input type="checkbox" id="no-downward-z-chk" />
-              <span data-i18n="ui.noDownwardZ">Prevent downward (âˆ’Z) vertex displacement</span>
-            </label>
-          </div>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.extendUntexturedHeading">Flush Edges</h3>
-          <p class="advanced-blurb" data-i18n="ui.extendUntexturedDesc">Make the texture end flush with flat untextured faces, as if each face were extended out through the texture: texture next to a flat face never rises past its level (bumps there are cut off flat), and where the texture pushes the surface out, the flat face is continued outward to meet it. On the bed this brings textured walls straight down onto the plate instead of hanging over it. The untextured faces themselves are not changed. Applied on export; the preview doesn't show it.</p>
-          <div class="form-row">
-            <label class="checkbox-label" for="extend-untextured-chk">
-              <input type="checkbox" id="extend-untextured-chk" checked />
-              <span data-i18n="ui.extendUntextured">Extend flat untextured faces through the texture</span>
-            </label>
-          </div>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.smoothBottomHeading">Smooth Bottom</h3>
-          <p class="advanced-blurb" data-i18n="ui.smoothBottomDesc">Snap any vertex within 0.1 mm of the bottom plane onto it after texturing. Keeps the bed-contact surface perfectly flat so slicers don't shade tiny height variations on bottom slivers.</p>
-          <div class="form-row" id="smooth-bottom-row">
-            <label class="checkbox-label" for="smooth-bottom-chk">
-              <input type="checkbox" id="smooth-bottom-chk" checked />
-              <span data-i18n="ui.smoothBottom">Snap near-bottom vertices to the bottom plane</span>
-            </label>
-          </div>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.harvestFlatHeading">Harvest Flat Faces</h3>
-          <p class="advanced-blurb" data-i18n="ui.harvestFlatDesc">When decimation reaches the triangle limit there are often still flat faces left that cost almost nothing to remove. With this on, decimation keeps collapsing them past the limit â€” as long as each collapse moves the surface less than the tolerance below â€” saving extra triangles without losing visible detail.</p>
-          <div class="form-row">
-            <label class="checkbox-label" for="harvest-flat-chk">
-              <input type="checkbox" id="harvest-flat-chk" checked />
-              <span data-i18n="ui.harvestFlat">Keep collapsing flat faces below the triangle limit</span>
-            </label>
-          </div>
-          <div class="form-row slider-row" id="harvest-tol-row">
-            <label for="harvest-tol" title="Maximum surface deviation a flat-face collapse may introduce. Higher = more triangles removed, but larger deviation. ~0.005 mm is imperceptible for FDM; raise it to remove more." data-i18n-title="tooltips.harvestTol" data-i18n="ui.harvestTol">Flat tolerance (mm)</label>
-            <input type="number" id="harvest-tol" class="val" min="0" max="1" step="0.005" value="0.005" />
-          </div>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.preserveUntexturedHeading">Preserve Untextured Surfaces</h3>
-          <p class="advanced-blurb" data-i18n="ui.preserveUntexturedDesc">Keep surfaces that receive no texture (painted mask, angle masks) exactly as they are in the source model: mesh regularization, decimation and Smooth Bottom leave them alone, and the export writes their original triangles back exactly, stitching the textured surface onto their edges (where the texture meets them, a triangle may be split at points on its own edge, which keeps its shape). Fillets and fine details stay intact. If the untextured surfaces alone exceed the triangle limit, the export exceeds the limit instead of degrading the texture.</p>
-          <div class="form-row">
-            <label class="checkbox-label" for="preserve-untextured-chk">
-              <input type="checkbox" id="preserve-untextured-chk" checked />
-              <span data-i18n="ui.preserveUntextured">Don't modify untextured surfaces</span>
-            </label>
-          </div>
-
-          <h3 class="panel-subsection-heading" data-i18n="ui.bakeTexturesHeading">Bake Textures</h3>
-          <p class="advanced-blurb" data-i18n="ui.bakeTexturesDesc">Apply the current texture to the mesh and reload the result as the working model so you can keep editing.</p>
-          <div class="form-row bake-mask-row">
-            <label class="checkbox-label" for="bake-mask-chk">
-              <input type="checkbox" id="bake-mask-chk" checked />
-              <span data-i18n="ui.bakeMaskNewFaces">Mask just-baked faces from further texturing</span>
-            </label>
-          </div>
-          <div id="bake-progress" class="export-progress hidden">
-            <div class="export-progress-track">
-              <div id="bake-progress-bar" class="export-progress-bar"></div>
-              <span id="bake-progress-pct" class="export-progress-pct"></span>
-            </div>
-            <span id="bake-progress-label" data-i18n="progress.processing">Processingâ€¦</span>
-          </div>
-          <div class="export-buttons">
-            <button id="bake-btn" class="export-btn" disabled
-                    data-i18n="ui.bakeTextures"
-                    data-i18n-title="tooltips.bakeTextures"
-                    title="Apply the current texture to the mesh and reload the result as the working model.">Bake Textures</button>
-          </div>
-
-          <!-- Debug: stats for last picked triangle (sliver/edge-length investigation) -->
-          <pre id="masking-tri-debug" class="masking-tri-debug" hidden></pre>
-        </div>
+      <!-- PDS edition: the Advanced / Beta card is empty and hidden. Its tools sit in the cards they
+           belong to, tagged Beta; their explanations are in Settings > Beta features. main.js still
+           wires this toggle, so the elements stay. -->
+      <section class="panel-section advanced-section collapsed" id="advanced-section" hidden>
+        <h2 class="advanced-toggle" id="advanced-toggle">Advanced / Beta Features</h2>
+        <div class="advanced-content" id="advanced-content"></div>
       </section>
 
       <!-- Export -->
@@ -756,6 +740,16 @@
           <input type="range" id="max-triangles" min="10000" max="20000000" step="10000" value="750000" />
           <span class="val" id="max-triangles-val">0.75 M</span>
         </div>
+        <div class="form-row">
+          <label class="checkbox-label" for="harvest-flat-chk">
+            <input type="checkbox" id="harvest-flat-chk" checked />
+            <span data-i18n="ui.harvestFlat">Keep collapsing flat faces below the triangle limit</span> <button type="button" class="beta-badge" data-beta="harvest" title="Beta: what it does is in Settings &gt; Beta features">Beta</button>
+          </label>
+        </div>
+        <div class="form-row slider-row" id="harvest-tol-row">
+          <label for="harvest-tol" title="Maximum surface deviation a flat-face collapse may introduce. Higher = more triangles removed, but larger deviation. ~0.005 mm is imperceptible for FDM; raise it to remove more." data-i18n-title="tooltips.harvestTol" data-i18n="ui.harvestTol">Flat tolerance (mm)</label>
+          <input type="number" id="harvest-tol" class="val" min="0" max="1" step="0.005" value="0.005" />
+        </div>
         <div id="tri-limit-warning" class="tri-limit-warning hidden" data-i18n="warnings.safetyCapHit">
           âš  16M-triangle safety cap hit during subdivision â€” result may still be coarser than requested edge length.
         </div>
@@ -771,6 +765,27 @@
           <button id="export-btn" class="export-btn" disabled data-i18n="ui.exportStl" data-i18n-title="tooltips.exportStl" title="Widely compatible with all slicers">Export STL</button>
           <button id="preview-export-btn" class="export-btn" disabled data-i18n="ui.previewExport" data-i18n-title="tooltips.previewExport" title="Show the exported mesh in the viewer, including steps the live preview can't show">Preview Export</button>
           <button id="export-3mf-btn" class="export-btn" disabled data-i18n="ui.export3mf" data-i18n-title="tooltips.export3mf" title="Smaller file size â€” may not be accepted by all slicers">Export 3MF</button>
+        </div>
+
+        <h3 class="panel-subsection-heading">Bake Textures <button type="button" class="beta-badge" data-beta="bake" title="Beta: what it does is in Settings &gt; Beta features">Beta</button></h3>
+        <div class="form-row bake-mask-row">
+          <label class="checkbox-label" for="bake-mask-chk">
+            <input type="checkbox" id="bake-mask-chk" checked />
+            <span data-i18n="ui.bakeMaskNewFaces">Mask just-baked faces from further texturing</span>
+          </label>
+        </div>
+        <div id="bake-progress" class="export-progress hidden">
+          <div class="export-progress-track">
+            <div id="bake-progress-bar" class="export-progress-bar"></div>
+            <span id="bake-progress-pct" class="export-progress-pct"></span>
+          </div>
+          <span id="bake-progress-label" data-i18n="progress.processing">Processingâ€¦</span>
+        </div>
+        <div class="export-buttons">
+          <button id="bake-btn" class="export-btn" disabled
+                  data-i18n="ui.bakeTextures"
+                  data-i18n-title="tooltips.bakeTextures"
+                  title="Apply the current texture to the mesh and reload the result as the working model.">Bake Textures</button>
         </div>
       </section>
 

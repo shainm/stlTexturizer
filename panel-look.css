@@ -811,3 +811,37 @@ main.sidebar-collapsed .gallery-panel {
 /* the textured picker while Model colours > Material sets it */
 .pds-colors input[type="color"]:disabled { opacity: 0.75; cursor: default; }
 .pds-colors label:has(input:disabled) { cursor: default; }
+
+/* ── Beta tools (in the cards they belong to) ───────────────────────── */
+.beta-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  cursor: help;
+}
+.beta-badge:hover { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+#advanced-section { display: none !important; }
+
+/* Settings > Beta features */
+.pds-beta-item { padding: 10px 12px 2px; margin-bottom: 8px; background: var(--pl-card-hot); border-radius: 8px; transition: box-shadow 0.3s; }
+.pds-beta-name { font-size: 12.5px; font-weight: 600; margin-bottom: 6px; }
+.pds-beta-item .pds-hint { margin: 0 0 6px; }
+.pds-beta-where { font-size: 11px; font-weight: 600; color: var(--accent-hover); margin-bottom: 8px; }
+[data-theme="light"] .pds-beta-where { color: var(--accent); }
+.pds-beta-item.pds-flash { animation: pds-flash 1.6s ease; }
+@keyframes pds-flash {
+  0%, 30% { box-shadow: 0 0 0 2px var(--accent); }
+  100%    { box-shadow: 0 0 0 2px transparent; }
+}

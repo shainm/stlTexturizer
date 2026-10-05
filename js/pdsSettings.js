@@ -28,6 +28,8 @@
  *    colour (modelColors), or with Model colours > Material the texture's
  *    material (materialColors: wood brown, stone grey, ... in a high and a
  *    low colour); personal.js initColours shows and applies them.
+ *  - Beta features: their tools sit in the cards they belong to with a Beta
+ *    tag (index.html); a click on the tag opens their explanation here.
  *  - Folding cards: a click on a card's title folds it to just the title
  *    (remembered per card).
  *  - Layout: tells the viewer how much of the canvas the floating cards cover
@@ -313,6 +315,23 @@ function initMenu(onOpen) {
   for (const id of ['welcome-link', 'license-link', 'imprint-link']) {
     $(id)?.addEventListener('click', () => set(false));
   }
+  return { open: () => set(true) };
+}
+
+// ── Beta tags: a click opens the menu at that tool's explanation ───────────
+function initBetaTags(menu) {
+  document.addEventListener('click', (e) => {
+    const tag = e.target.closest('.beta-badge[data-beta]');
+    if (!tag) return;
+    e.preventDefault();   // inside a label: don't tick its checkbox
+    const item = $('pds-beta-' + tag.dataset.beta);
+    menu.open();
+    if (!item) return;
+    item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    item.classList.remove('pds-flash');
+    void item.offsetWidth;   // restart the highlight
+    item.classList.add('pds-flash');
+  });
 }
 
 // ── Profiles ────────────────────────────────────────────────────────────────
@@ -590,7 +609,8 @@ export function initSettingsMenu(app) {
   initModelColors();
   refreshViewer();   // the 3D view in the saved style's colours
   const profiles = initProfiles(app, toast);
-  initMenu(() => profiles.render());
+  const menu = initMenu(() => profiles.render());
+  initBetaTags(menu);
   initFolding();
   initViewInset();
   applyDefaultOnStart(app, profiles, freshSession).catch(err => console.warn('[pds] default profile', err));
