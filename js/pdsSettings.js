@@ -24,6 +24,8 @@
  *  - Support: CNC Kitchen's store / tip links and the What's New, License
  *    and Imprint popups live only here. The export thank-you popup, the store
  *    banner and the What's New popup at start-up are switched off.
+ *  - The model's textured / untextured preview colours follow the theme
+ *    colour (modelColors; personal.js initColours shows and applies them).
  *  - Folding cards: a click on a card's title folds it to just the title
  *    (remembered per card).
  *  - Layout: tells the viewer how much of the canvas the floating cards cover
@@ -83,9 +85,48 @@ const putProfile = (p) => tx('readwrite', s => s.put(p));
 const deleteProfile = (name) => tx('readwrite', s => s.delete(name));
 
 // ── Theme colour ────────────────────────────────────────────────────────────
-function applyAccent(hex) {
+function applyAccent(hex, changed) {
   document.documentElement.style.setProperty('--theme-color', hex);
   refreshViewer();   // Matte tints the 3D view's background with it
+  // a new theme colour re-ties the textured / untextured preview colours
+  // (personal.js initColours), dropping a hand-picked one
+  if (changed) window.dispatchEvent(new CustomEvent('pds-theme-color', { detail: hex }));
+}
+
+/** The theme colour now in effect (index.html's saved one, else the CSS default). */
+export function currentThemeColor() {
+  return getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim().toLowerCase() || DEFAULT_ACCENT;
+}
+
+/**
+ * The model's preview colours for a theme colour: calm, dusty versions of
+ * it. Textured = the theme colour's hue, untextured = the opposite hue (the
+ * original teal / orange pair is nearly that), both at low saturation and a
+ * lowish lightness. Low on purpose: the preview takes these as linear light
+ * (previewMaterial.js), so on the shaded model they come out much lighter and
+ * stronger than the swatch. A grey theme keeps a muted orange.
+ */
+export function modelColors(hex) {
+  const [h, s] = hexToHsl(hex);
+  const textured = hslToHex(h, Math.min(0.34, Math.max(0.18, s * 0.5)), 0.36);
+  const untextured = hslToHex(s < 0.12 ? 22 : (h + 180) % 360, 0.36, 0.38);
+  return { textured, untextured };
+}
+
+function hexToHsl(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return '#' + [r, g, b].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
 }
 
 /** The 3D view's colours come from the CSS (viewer.js cssColor): re-read them. */
@@ -138,7 +179,7 @@ function initAppearance() {
   };
   const pick = (hex, save = true) => {
     current = hex.toLowerCase();
-    applyAccent(current);
+    applyAccent(current, save);
     if (save) lsSet(ACCENT_KEY, current === DEFAULT_ACCENT ? null : current);
     mark();
   };

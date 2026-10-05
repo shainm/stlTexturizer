@@ -9,7 +9,8 @@
  * internals used here.
  *
  *  - Version label marks this edition.
- *  - Preview colours for textured / untextured surfaces (remembered).
+ *  - Preview colours for textured / untextured surfaces, tied to the theme
+ *    colour (a hand-picked one holds until the theme colour changes).
  *  - The settings menu (gear, js/pdsSettings.js): theme colour, dark/light,
  *    language, settings profiles + the default one, and the support links,
  *    which appear nowhere else (no support popups or banners).
@@ -41,7 +42,7 @@ import { APP_VERSION } from './version.js';
 import { setDownloadSink } from './exporter.js';
 import { THREE } from './threeCompat.js';
 import { getCamera, getRenderer, getCurrentMesh, setDiagEdges } from './viewer.js';
-import { initSettingsMenu } from './pdsSettings.js';
+import { initSettingsMenu, modelColors, currentThemeColor } from './pdsSettings.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -193,20 +194,37 @@ function modal(title, body, buttons) {
 const notice = (title, text) => modal(title, el('p', {}, text), [{ label: 'OK', value: 1, primary: true }]);
 
 // ── Preview colours ─────────────────────────────────────────────────────────
+// Tied to the theme colour (pdsSettings.js modelColors). Picking one by hand
+// overrides it until the theme colour changes, which ties both again.
 function initColours(app) {
-  const tex = el('input', { type: 'color', value: lsGet('col-tex', '#38adad'), title: 'Textured surfaces' });
-  const untex = el('input', { type: 'color', value: lsGet('col-untex', '#d96626'), title: 'Untextured surfaces' });
-  const apply = () => {
-    lsSet('col-tex', tex.value); lsSet('col-untex', untex.value);
+  const tex = el('input', { type: 'color', title: 'Textured surfaces' });
+  const untex = el('input', { type: 'color', title: 'Untextured surfaces' });
+  const custom = () => { try { return JSON.parse(lsGet('col-custom', 'null')); } catch { return null; } };
+  const show = (theme) => {
+    const auto = modelColors(theme), c = custom();
+    const own = c && c.theme === theme ? c : null;
+    tex.value = own?.tex || auto.textured;
+    untex.value = own?.untex || auto.untextured;
     app.setPreviewColors(tex.value, untex.value);
   };
-  tex.addEventListener('input', apply);
-  untex.addEventListener('input', apply);
+  const pick = () => {
+    lsSet('col-custom', JSON.stringify({ theme: currentThemeColor(), tex: tex.value, untex: untex.value }));
+    app.setPreviewColors(tex.value, untex.value);
+  };
+  tex.addEventListener('input', pick);
+  untex.addEventListener('input', pick);
+  window.addEventListener('pds-theme-color', (e) => {
+    try { localStorage.removeItem(LS + 'col-custom'); } catch {}
+    show(e.detail);
+  });
+  const tip = ' (follows the theme colour; pick one to override it until the theme colour changes)';
   const box = el('span', { class: 'pds-colors' },
-    el('label', { title: 'Preview colour of textured surfaces' }, tex, 'Textured'),
-    el('label', { title: 'Preview colour of untextured surfaces' }, untex, 'Untextured'));
+    el('label', { title: 'Preview colour of textured surfaces' + tip }, tex, 'Textured'),
+    el('label', { title: 'Preview colour of untextured surfaces' + tip }, untex, 'Untextured'));
   document.getElementById('section-toggle')?.closest('label')?.after(box);
-  apply();
+  // the colours picked before they followed the theme
+  try { localStorage.removeItem(LS + 'col-tex'); localStorage.removeItem(LS + 'col-untex'); } catch {}
+  show(currentThemeColor());
 }
 
 // ── STL reading (binary or ASCII) ──────────────────────────────────────────
