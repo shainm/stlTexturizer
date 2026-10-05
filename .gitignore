@@ -10,3 +10,4 @@ test-*.mjs
 test-fixtures/
 .env
 .codegraph
+__pycache__/
