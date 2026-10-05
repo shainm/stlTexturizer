@@ -57,6 +57,29 @@ export function applyDisplacement(geometry, imageData, imgWidth, imgHeight, sett
 }
 
 /**
+ * The Z height multiplier in effect (PDS edition, 3D Print Settings): the
+ * global `printZScale` when `printZScaleOn` is set, else 1 (no change).
+ */
+export function printZScale(settings) {
+  if (!settings || !settings.printZScaleOn) return 1;
+  const k = Number(settings.printZScale);
+  return Number.isFinite(k) && k > 0 ? k : 1;
+}
+
+/**
+ * How much a height is scaled on a surface with normal (nx, ny, nz) when Z
+ * heights are kz × the X/Y ones: |diag(1, 1, kz) · n̂| — 1 on a vertical
+ * wall, kz on a flat top or bottom. Must match printZFactor in the preview
+ * shader (previewMaterial.js).
+ */
+export function printZFactor(nx, ny, nz, kz) {
+  const len2 = nx * nx + ny * ny + nz * nz;
+  if (!(len2 > 1e-20)) return 1;
+  const z2 = nz * nz / len2;
+  return Math.sqrt((1 - z2) + kz * kz * z2);
+}
+
+/**
  * Displace with several texture layers composited per vertex.
  *
  * Every layer samples its own height map with its own projection settings;
@@ -616,6 +639,24 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     layer._softMax = null; layer._hardPos = null;
     layer._zoneAreaX = layer._zoneAreaY = layer._zoneAreaZ = null;
     if (onProgress) onProgress(0.5 * (li + 1) / layers.length);
+  }
+
+  // ── Print orientation: separate Z height (PDS edition) ────────────────────
+  // Walls get their texture from X/Y nozzle moves, so a small height already
+  // shows; tops, bottoms and shallow slopes are built from layers and need
+  // more. Each height is scaled by |diag(1, 1, kz) · n|: 1 on a vertical
+  // wall, kz on a flat top/bottom, in between on slopes. Still one scalar
+  // per position (crease groups: per group), so still watertight.
+  const kz = printZScale(settings);
+  if (kz !== 1) {
+    for (let vid = 0; vid < uniqueCount; vid++) {
+      acc[vid] *= printZFactor(smoothNrmX[vid], smoothNrmY[vid], smoothNrmZ[vid], kz);
+    }
+    if (creases) {
+      for (let k = 0; k < creases.groupCount; k++) {
+        groupAcc[k] *= printZFactor(creases.nrmX[k], creases.nrmY[k], creases.nrmZ[k], kz);
+      }
+    }
   }
 
   // ── Pass 3: displace every vertex copy by the same vector ─────────────────

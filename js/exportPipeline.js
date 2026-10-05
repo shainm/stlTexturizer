@@ -58,7 +58,7 @@ import { THREE } from './threeCompat.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { subdivide } from './subdivision.js';
 import { regularizeMesh } from './regularize.js';
-import { applyDisplacement, applyDisplacementLayers } from './displacement.js';
+import { applyDisplacement, applyDisplacementLayers, printZScale } from './displacement.js';
 import { decimate } from './decimation.js';
 import { resolveTJunctions, countEdgeDefects, countAreaSlivers } from './meshRepair.js';
 import { interpolateFromParents } from './softMask.js';
@@ -377,7 +377,9 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     let flushStats = null;
     if (settings.extendUntextured && mode === 'export') {
       const ew = subdivided.attributes.excludeWeight;
-      const amp = Math.abs(settings.amplitude ?? 1) * (settings.symmetricDisplacement ? 0.5 : 1);
+      // Tops/bottoms may be printZScale x taller (3D Print Settings).
+      const amp = Math.abs(settings.amplitude ?? 1) * (settings.symmetricDisplacement ? 0.5 : 1)
+        * Math.max(1, printZScale(settings));
       const fr = flushToUntextured(displaced.attributes.position.array,
         subdivided.attributes.position.array, ew ? ew.array : null,
         { reach: Math.max(1, 3 * amp, 2 * settings.refineLength) });
