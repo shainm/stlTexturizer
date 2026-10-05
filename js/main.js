@@ -6776,7 +6776,14 @@ initPersonal({
     .map((L, i) => (L.visible ? _layerMapEntry(i) : null))
     .filter(Boolean)
     .map(e => String(e.name)),
-  setPreviewColors: (textured, untextured) => { setPreviewColors(textured, untextured); _syncPreviewMaterial(); },
+  setPreviewColors: (textured, untextured, texturedLow) => { setPreviewColors(textured, untextured, texturedLow); _syncPreviewMaterial(); },
+  // The active layer's texture: { name, category } (category '' for a custom map), or null.
+  activeTexture: () => {
+    const e = _layerMapEntry(activeLayer);
+    if (!e) return null;
+    const p = e.isCustom ? null : IMAGE_PRESETS.find(q => q.name === e.name);
+    return { name: String(e.name), category: p?.category || '' };
+  },
   // Shared texture frame, in file coordinates of the loaded model ({min, size}
   // as {x,y,z}) or null for the model's own bounds. Needs an unrotated pose.
   setTextureFrame: (frame) => {

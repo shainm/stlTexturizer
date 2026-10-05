@@ -49,7 +49,7 @@
 }
 
 /* The floating panels, per style (Settings > Style; data-style on <html>).
-   Tray, the default: the tray panels' glow from the top. Matte and Glass
+   Gradient, the default: the tray panels' glow from the top. Matte and Glass
    are at the end of this file. */
 :root {
   --panel-bg:       linear-gradient(to bottom, var(--pl-glow), transparent 120px), var(--surface);
@@ -293,14 +293,14 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 .pds-group:first-of-type { border-top: 0; margin-top: 0; }
 .pds-group h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .pds-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.pds-label { flex: 0 0 78px; font-size: 12px; color: var(--text-muted); }
+.pds-label { flex: 0 0 86px; font-size: 12px; color: var(--text-muted); }
 .pds-row > .excl-seg { flex: 1; }
 .pds-hint { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); margin: -2px 0 10px; }
 
-.pds-swatches { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.pds-swatches { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
 .pds-swatch {
-  width: 21px;
-  height: 21px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 50%;
@@ -807,3 +807,7 @@ main.sidebar-collapsed .gallery-panel {
   main.sidebar-collapsed #settings-panel,
   main.sidebar-collapsed .gallery-panel:not(.hidden) { display: none; }
 }
+
+/* the textured picker while Model colours > Material sets it */
+.pds-colors input[type="color"]:disabled { opacity: 0.75; cursor: default; }
+.pds-colors label:has(input:disabled) { cursor: default; }

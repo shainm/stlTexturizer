@@ -8,7 +8,7 @@
  * viewport's top right) and the floating layout around it. Called from
  * personal.js initPersonal, with the same `app` internals.
  *
- *  - Appearance: the panel style (data-style on <html>: Tray, the default,
+ *  - Appearance: the panel style (data-style on <html>: Gradient, the default,
  *    with the tray panels' glow; Matte, flat tinted surfaces like Material
  *    You; Glass, frosted panels like Apple's), the theme colour
  *    (--theme-color; panel-look.css derives the
@@ -25,7 +25,9 @@
  *    and Imprint popups live only here. The export thank-you popup, the store
  *    banner and the What's New popup at start-up are switched off.
  *  - The model's textured / untextured preview colours follow the theme
- *    colour (modelColors; personal.js initColours shows and applies them).
+ *    colour (modelColors), or with Model colours > Material the texture's
+ *    material (materialColors: wood brown, stone grey, ... in a high and a
+ *    low colour); personal.js initColours shows and applies them.
  *  - Folding cards: a click on a card's title folds it to just the title
  *    (remembered per card).
  *  - Layout: tells the viewer how much of the canvas the floating cards cover
@@ -37,7 +39,8 @@ import { setViewInset, setViewerTheme } from './viewer.js';
 const LS = 'bm-pds-';
 const ACCENT_KEY = LS + 'accent';          // also read by index.html's pre-paint script
 const DEFAULT_KEY = LS + 'default-profile';
-const STYLE_KEY = LS + 'style';             // also read by index.html: tray (default) | matte | glass
+const STYLE_KEY = LS + 'style';              // also read by index.html: gradient (default) | matte | glass
+const MODEL_COLORS_KEY = LS + 'model-colors';  // theme (default) | material
 const DEFAULT_ACCENT = '#4a84c4';
 
 // The tray panels' accents, plus BumpMesh's own purple.
@@ -49,6 +52,7 @@ const SWATCHES = [
   { hex: '#e0a526', name: 'Amber' },
   { hex: '#2bb3a3', name: 'Teal' },
   { hex: '#7c6aff', name: 'Original purple' },
+  { hex: '#8c9096', name: 'Graphite (monotone)' },
 ];
 
 function lsGet(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }
@@ -108,10 +112,52 @@ export function currentThemeColor() {
  */
 export function modelColors(hex) {
   const [h, s] = hexToHsl(hex);
+  // a grey (monotone) theme: light grey textured, darker grey untextured
+  if (s < 0.12) return { textured: hslToHex(h, s, 0.42), untextured: hslToHex(h, s, 0.2) };
   const textured = hslToHex(h, Math.min(0.34, Math.max(0.18, s * 0.5)), 0.36);
-  const untextured = hslToHex(s < 0.12 ? 22 : (h + 180) % 360, 0.36, 0.38);
+  const untextured = hslToHex((h + 180) % 360, 0.36, 0.38);
   return { textured, untextured };
 }
+
+// ── Material colours (Settings > Model colours > Material) ─────────────────
+// The textured surface takes the colours of what its texture depicts, as a
+// pair: `high` for the raised parts, `low` for the recessed ones (the shader
+// mixes them by the relief's height). Matched on the texture's name first
+// (custom maps too: "oak.png" is wood), then on its gallery category; the
+// rest (patterns, geometric) keep the theme colour, with darker low parts.
+// Dark-ish on purpose: the preview renders colours lighter than their hex.
+const MATERIALS = [
+  { name: 'Bark',     re: /bark/i,                                              high: '#3e2a1e', low: '#6e5038' },
+  { name: 'Wood',     re: /wood|grain|plank|timber|oak|walnut|maple|burl/i,       high: '#4a2e1c', low: '#8a6440' },
+  { name: 'Bamboo',   re: /bamboo|reed|straw|wicker|basket|rattan|cane|tachiwaki|flute|ribs/i, high: '#8a7a48', low: '#5c4e2c' },
+  { name: 'Leaves',   re: /lea(f|ves)|moss|grass|fern/i,                          high: '#4a6a38', low: '#2e4224' },
+  { name: 'Scales',   re: /scale|dragon|reptile/i,                                high: '#4f7a6c', low: '#2c4a40' },
+  { name: 'Brick',    re: /brick|roof|shingle|terracotta/i,                       high: '#8a4632', low: '#5a5550' },
+  { name: 'Stone',    re: /cobble|flagstone|setts|stone|rock|granite|slate|marble/i, high: '#7c7872', low: '#3e3b37' },
+  { name: 'Concrete', re: /concrete|sand|stipple|speckle|matte|plaster|stucco/i,  high: '#77746e', low: '#57544f' },
+  { name: 'Leather',  re: /leather|haircell|hide|suede/i,                         high: '#6e4429', low: '#43281a' },
+  { name: 'Carbon',   re: /carbon/i,                                              high: '#50545a', low: '#1f2124' },
+  { name: 'Metal',    re: /brushed|hammer|knurl|spark|chainmail|armou?r|metal|steel|isogrid|grip|cog|death star|diamond plate/i, high: '#959ba2', low: '#50555b' },
+  { name: 'Fabric',   re: /weave|twill|knit|fabric|denim|linen|canvas|curtain|cloth/i, high: '#5e6a86', low: '#3a4258' },
+  { name: 'Water',    re: /rain|ripple|wave|sazanami|current|cloud|water/i,       high: '#5f8aa6', low: '#2f4c62' },
+  { name: 'Crystal',  re: /crystal|ice|gem|glass|bubble/i,                        high: '#86a8bf', low: '#4a6a84' },
+];
+const CATEGORY_MATERIALS = {
+  natural: { name: 'Natural', high: '#7a6a4e', low: '#4a3e2c' },
+  fabric:  { name: 'Fabric',  high: '#5e6a86', low: '#3a4258' },
+  mold:    { name: 'Plastic', high: '#62666d', low: '#3c3f44' },
+};
+
+/** {name, high, low} for a texture ({name, category} or null) under a theme colour. */
+export function materialColors(tex, theme) {
+  const name = tex?.name || '';
+  const m = MATERIALS.find(x => x.re.test(name)) || CATEGORY_MATERIALS[tex?.category];
+  if (m) return { name: m.name, high: m.high, low: m.low };
+  const [h, s, l] = hexToHsl(modelColors(theme).textured);
+  return { name: 'Theme', high: hslToHex(h, s, l), low: hslToHex(h, s, l * 0.55) };
+}
+
+export const modelColorMode = () => (lsGet(MODEL_COLORS_KEY, 'theme') === 'material' ? 'material' : 'theme');
 
 function hexToHsl(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -134,10 +180,29 @@ function refreshViewer() {
   setViewerTheme(document.documentElement.getAttribute('data-theme') === 'light');
 }
 
+function initModelColors() {
+  const seg = $('pds-model-colors-seg');
+  const sync = () => {
+    for (const b of seg.querySelectorAll('button')) {
+      const on = b.dataset.mode === modelColorMode();
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    lsSet(MODEL_COLORS_KEY, b.dataset.mode === 'material' ? 'material' : null);
+    window.dispatchEvent(new CustomEvent('pds-model-colors'));   // personal.js initColours
+    sync();
+  });
+  sync();
+}
+
 function initStyle() {
   const seg = $('pds-style-seg');
   const sync = () => {
-    const style = document.documentElement.getAttribute('data-style') || 'tray';
+    const style = document.documentElement.getAttribute('data-style') || 'gradient';
     for (const b of seg.querySelectorAll('button')) {
       const on = b.dataset.style === style;
       b.classList.toggle('active', on);
@@ -148,9 +213,9 @@ function initStyle() {
     const b = e.target.closest('button[data-style]');
     if (!b) return;
     const style = b.dataset.style;
-    if (style === 'tray') document.documentElement.removeAttribute('data-style');
+    if (style === 'gradient') document.documentElement.removeAttribute('data-style');
     else document.documentElement.setAttribute('data-style', style);
-    lsSet(STYLE_KEY, style === 'tray' ? null : style);
+    lsSet(STYLE_KEY, style === 'gradient' ? null : style);
     refreshViewer();
     sync();
   });
@@ -522,6 +587,7 @@ export function initSettingsMenu(app) {
   silenceSupportPopups();
   initStyle();
   initAppearance();
+  initModelColors();
   refreshViewer();   // the 3D view in the saved style's colours
   const profiles = initProfiles(app, toast);
   initMenu(() => profiles.render());

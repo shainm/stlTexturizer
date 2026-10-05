@@ -10,14 +10,20 @@ import { scaleMmToRelative } from './mapping.js';
 const _previewColors = {
   textured:   [0.22, 0.68, 0.68],  // teal
   untextured: [0.85, 0.40, 0.15],  // orange
+  texturedLow: null,               // Personal: colour of the texture's low parts (null = one colour)
 };
 
-/** Set the preview colours; each is '#rrggbb' or an [r,g,b] 0..1 array. Takes effect on the next updateMaterial. */
-export function setPreviewColors(textured, untextured) {
+/**
+ * Set the preview colours; each is '#rrggbb' or an [r,g,b] 0..1 array. Takes effect on the next updateMaterial.
+ * Personal: texturedLow (optional) colours the texture's low parts, textured
+ * then its high parts, mixed by the relief's height (null = one colour).
+ */
+export function setPreviewColors(textured, untextured, texturedLow = null) {
   const parse = (c) => Array.isArray(c) ? c
     : [1, 3, 5].map(i => parseInt(String(c).slice(i, i + 2), 16) / 255);
   if (textured)   _previewColors.textured   = parse(textured);
   if (untextured) _previewColors.untextured = parse(untextured);
+  _previewColors.texturedLow = texturedLow ? parse(texturedLow) : null;
 }
 
 // Mapping mode constants (must match index.html <option value="…">)
@@ -361,6 +367,8 @@ const fragmentShader = /* glsl */`
   uniform int       boundaryFalloffCurve; // 0 = linear, 1 = s-curve, 2 = ease-in
   uniform vec3      texturedColor;        // preview colour of textured surfaces
   uniform vec3      untexturedColor;      // ...and of untextured ones (angle-masked: darker)
+  uniform vec3      texturedColorLow;     // Personal: colour of the relief's low parts ...
+  uniform int       heightTint;           // ... when 1 (texturedColor = the high parts)
   uniform int       layeredTint;          // 1 = several layers: surfaces the active layer leaves alone are neutral grey
 
   varying vec3  vModelPos;
@@ -377,16 +385,21 @@ const fragmentShader = /* glsl */`
 
   // Fold layer l's screen-space height gradient (scaled by its amplitude and
   // weighted by wl) into the running bump sums with the over/add recurrence.
-  void bumpLayer(int l, vec3 PN, float wl, inout float dhx, inout float dhy, inout float coverSum) {
+  // Personal: hSum composites the height the same way (0 = low, 1 = high;
+  // a negative amplitude pushes in, so its high parts are the low ones).
+  void bumpLayer(int l, vec3 PN, float wl, inout float dhx, inout float dhy, inout float coverSum, inout float hSum) {
     float hRaw = computeHeightAtPoint(l, vModelPos, PN, vModelNormal);
     float gx = dFdx(hRaw) * layerAmp[l];
     float gy = dFdy(hRaw) * layerAmp[l];
+    float hv = layerAmp[l] < 0.0 ? 1.0 - hRaw : hRaw;
     if (layerAdd[l] == 1) {
       dhx += gx * wl; dhy += gy * wl; coverSum += wl;
+      hSum += (hv - 0.5) * wl;
     } else {
       dhx = dhx * (1.0 - wl) + gx * wl;
       dhy = dhy * (1.0 - wl) + gy * wl;
       coverSum = coverSum * (1.0 - wl) + wl;
+      hSum = hSum * (1.0 - wl) + hv * wl;
     }
   }
 
@@ -445,11 +458,11 @@ const fragmentShader = /* glsl */`
     // backend (Chrome/Edge on Windows) turns dFdx/dFdy inside a loop that
     // breaks on a uniform into code that silently yields zero, which made the
     // preview surface look flat while the silhouette still displaced.
-    float dhx = 0.0, dhy = 0.0, coverSum = 0.0;
-    bumpLayer(0, PN, w.x, dhx, dhy, coverSum);
-    if (layerCount > 1) bumpLayer(1, PN, w.y, dhx, dhy, coverSum);
-    if (layerCount > 2) bumpLayer(2, PN, w.z, dhx, dhy, coverSum);
-    if (layerCount > 3) bumpLayer(3, PN, w.w, dhx, dhy, coverSum);
+    float dhx = 0.0, dhy = 0.0, coverSum = 0.0, hSum = 0.5;
+    bumpLayer(0, PN, w.x, dhx, dhy, coverSum, hSum);
+    if (layerCount > 1) bumpLayer(1, PN, w.y, dhx, dhy, coverSum, hSum);
+    if (layerCount > 2) bumpLayer(2, PN, w.z, dhx, dhy, coverSum, hSum);
+    if (layerCount > 3) bumpLayer(3, PN, w.w, dhx, dhy, coverSum, hSum);
     coverSum = clamp(coverSum, 0.0, 1.0);
     float zf = printZFactor(PN);
     dhx *= zf; dhy *= zf;
@@ -486,6 +499,8 @@ const fragmentShader = /* glsl */`
     // are perfectly consistent everywhere.  Mask tinting is applied AFTER
     // lighting as a colour blend so masked areas keep the same glossy look.
     vec3 tealBase      = texturedColor;
+    // Personal: material colours - low parts in one colour, high in the other.
+    if (heightTint == 1) tealBase = mix(texturedColorLow, texturedColor, smoothstep(0.15, 0.85, clamp(hSum, 0.0, 1.0)));
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
     // plain neutral grey, so "teal = active layer" reads at a glance and the
@@ -618,6 +633,8 @@ export function updateMaterial(material, layers, settings) {
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
   u.texturedColor.value.set(..._previewColors.textured);
   u.untexturedColor.value.set(..._previewColors.untextured);
+  u.heightTint.value = _previewColors.texturedLow ? 1 : 0;
+  if (_previewColors.texturedLow) u.texturedColorLow.value.set(..._previewColors.texturedLow);
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -659,6 +676,8 @@ function buildUniforms() {
     layeredTint:          { value: 0 },
     texturedColor:        { value: new THREE.Vector3(..._previewColors.textured) },
     untexturedColor:      { value: new THREE.Vector3(..._previewColors.untextured) },
+    texturedColorLow:     { value: new THREE.Vector3(..._previewColors.texturedLow ?? _previewColors.textured) },
+    heightTint:           { value: _previewColors.texturedLow ? 1 : 0 },
   };
 }
 

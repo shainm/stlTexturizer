@@ -41,8 +41,8 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink } from './exporter.js';
 import { THREE } from './threeCompat.js';
-import { getCamera, getRenderer, getCurrentMesh, setDiagEdges } from './viewer.js';
-import { initSettingsMenu, modelColors, currentThemeColor } from './pdsSettings.js';
+import { getCamera, getRenderer, getCurrentMesh, setDiagEdges, requestRender } from './viewer.js';
+import { initSettingsMenu, modelColors, currentThemeColor, materialColors, modelColorMode } from './pdsSettings.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -194,37 +194,57 @@ function modal(title, body, buttons) {
 const notice = (title, text) => modal(title, el('p', {}, text), [{ label: 'OK', value: 1, primary: true }]);
 
 // ── Preview colours ─────────────────────────────────────────────────────────
-// Tied to the theme colour (pdsSettings.js modelColors). Picking one by hand
-// overrides it until the theme colour changes, which ties both again.
+// Tied to the theme colour (pdsSettings.js modelColors), or with Model colours
+// > Material to the active texture's material (materialColors: a high and a
+// low colour). Picking one by hand overrides it until the theme colour
+// changes, which ties both again; in Material mode the texture sets the
+// textured colour.
 function initColours(app) {
-  const tex = el('input', { type: 'color', title: 'Textured surfaces' });
-  const untex = el('input', { type: 'color', title: 'Untextured surfaces' });
+  const tex = el('input', { type: 'color' });
+  const untex = el('input', { type: 'color' });
+  const texLabel = el('label', {}, tex, 'Textured');
   const custom = () => { try { return JSON.parse(lsGet('col-custom', 'null')); } catch { return null; } };
-  const show = (theme) => {
+  const tip = ' (follows the theme colour; pick one to override it until the theme colour changes)';
+  const show = () => {
+    const theme = currentThemeColor();
     const auto = modelColors(theme), c = custom();
     const own = c && c.theme === theme ? c : null;
-    tex.value = own?.tex || auto.textured;
+    const mat = modelColorMode() === 'material' ? materialColors(app.activeTexture(), theme) : null;
+    tex.disabled = !!mat;
+    texLabel.title = mat ? `Set by the texture: ${mat.name} (Settings > Model colours)` : 'Preview colour of textured surfaces' + tip;
+    tex.value = mat ? mat.high : own?.tex || auto.textured;
     untex.value = own?.untex || auto.untextured;
-    app.setPreviewColors(tex.value, untex.value);
+    app.setPreviewColors(tex.value, untex.value, mat ? mat.low : null);
+    requestRender();   // the view only redraws on request
   };
   const pick = () => {
-    lsSet('col-custom', JSON.stringify({ theme: currentThemeColor(), tex: tex.value, untex: untex.value }));
-    app.setPreviewColors(tex.value, untex.value);
+    const c = custom();
+    lsSet('col-custom', JSON.stringify({ theme: currentThemeColor(),
+      tex: tex.disabled ? (c?.tex || null) : tex.value, untex: untex.value }));
+    show();
   };
   tex.addEventListener('input', pick);
   untex.addEventListener('input', pick);
-  window.addEventListener('pds-theme-color', (e) => {
+  window.addEventListener('pds-theme-color', () => {
     try { localStorage.removeItem(LS + 'col-custom'); } catch {}
-    show(e.detail);
+    show();
   });
-  const tip = ' (follows the theme colour; pick one to override it until the theme colour changes)';
+  window.addEventListener('pds-model-colors', show);
+  // Material mode follows the active layer's texture; there is no event for a
+  // texture change, so look twice a second (a string compare when nothing changed).
+  let last = '';
+  setInterval(() => {
+    if (modelColorMode() !== 'material') { last = ''; return; }
+    const key = JSON.stringify(app.activeTexture());
+    if (key !== last) { last = key; show(); }
+  }, 500);
   const box = el('span', { class: 'pds-colors' },
-    el('label', { title: 'Preview colour of textured surfaces' + tip }, tex, 'Textured'),
+    texLabel,
     el('label', { title: 'Preview colour of untextured surfaces' + tip }, untex, 'Untextured'));
   document.getElementById('section-toggle')?.closest('label')?.after(box);
   // the colours picked before they followed the theme
   try { localStorage.removeItem(LS + 'col-tex'); localStorage.removeItem(LS + 'col-untex'); } catch {}
-  show(currentThemeColor());
+  show();
 }
 
 // ── STL reading (binary or ASCII) ──────────────────────────────────────────
