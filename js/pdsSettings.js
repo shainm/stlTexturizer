@@ -327,10 +327,14 @@ function initBetaTags(menu) {
     const item = $('pds-beta-' + tag.dataset.beta);
     menu.open();
     if (!item) return;
-    item.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    item.classList.remove('pds-flash');
-    void item.offsetWidth;   // restart the highlight
-    item.classList.add('pds-flash');
+    // A folded Beta card opens first; scroll once it has its height.
+    const opening = unfoldCard(item.closest('.pds-foldable'));
+    setTimeout(() => {
+      item.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      item.classList.remove('pds-flash');
+      void item.offsetWidth;   // restart the highlight
+      item.classList.add('pds-flash');
+    }, opening ? 300 : 0);
   });
 }
 
@@ -524,18 +528,28 @@ function initViewInset() {
 }
 
 // ── Folding cards: a click on a card's title folds it to just the title ────
+// The sidebar's cards and the settings menu's cards fold alike; which ones are
+// folded is remembered (the menu's keys carry a "menu:" prefix).
 const FOLD_KEY = LS + 'folded';
+const unfolders = new WeakMap();   // card -> opens it (Beta tags use it)
+
+/** Opens a folded card; true when it was folded (it is now animating open). */
+function unfoldCard(card) { return !!(card && unfolders.get(card)?.()); }
 
 function initFolding() {
   let folded;
   try { folded = new Set(JSON.parse(lsGet(FOLD_KEY, '[]'))); } catch { folded = new Set(); }
   const save = () => lsSet(FOLD_KEY, folded.size ? JSON.stringify([...folded]) : null);
 
-  for (const card of document.querySelectorAll('#settings-panel > .panel-section')) {
+  const cards = [
+    ...[...document.querySelectorAll('#settings-panel > .panel-section')].map(card => [card, '']),
+    ...[...document.querySelectorAll('#pds-settings > .pds-group')].map(card => [card, 'menu:']),
+  ];
+  for (const [card, prefix] of cards) {
     const h2 = card.querySelector(':scope > h2');
     // Advanced folds already (main.js); the first card has no title.
     if (!h2 || card.classList.contains('advanced-section')) continue;
-    const key = h2.dataset.i18n || h2.textContent.trim();
+    const key = prefix + (h2.dataset.i18n || h2.textContent.trim());
 
     // Everything after the title goes into a body that animates its height
     // (grid rows 1fr <-> 0fr). Nodes are moved, so ids and listeners stay.
@@ -571,14 +585,21 @@ function initFolding() {
       body.addEventListener('transitionend', done);
       setTimeout(done, 450);   // reduced motion: no transitionend
     };
-    const toggle = (e) => {
-      // the (i) tooltip text in a title is not a reason to fold
-      if (e.target.closest('a, button, input')) return;
-      const fold = !card.classList.contains('pds-folded');
+    const setSaved = (fold) => {
       if (fold) folded.add(key); else folded.delete(key);
       save();
       set(fold, true);
     };
+    const toggle = (e) => {
+      // the (i) tooltip text in a title is not a reason to fold
+      if (e.target.closest('a, button, input')) return;
+      setSaved(!card.classList.contains('pds-folded'));
+    };
+    unfolders.set(card, () => {
+      if (!card.classList.contains('pds-folded')) return false;
+      setSaved(false);
+      return true;
+    });
     h2.addEventListener('click', toggle);
     h2.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }

@@ -80,7 +80,6 @@
 #viewport-footer,
 .vp-btn,
 .sidebar-toggle,
-.pds-settings,
 .pds-toast,
 .export-dialog,
 .welcome-modal,
@@ -237,24 +236,29 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 }
 
 /* ── Settings menu (the gear) ───────────────────────────────────────── */
+/* Like the sidebar: a transparent column of separate cards (the title card,
+   then one per group), each group folding by its title (initFolding). Clicks
+   between the cards go through to the 3D view, which closes the menu. */
 .pds-settings {
   position: absolute;
   top: calc(var(--gap) + 46px);
   right: calc(var(--view-right) + var(--gap));
   z-index: 30;
   width: min(360px, calc(100vw - 2 * var(--gap)));
-  max-height: calc(100% - 46px - 3 * var(--gap));
+  max-height: calc(100% - 46px - 2 * var(--gap));
   overflow-y: auto;
-  padding: 14px 16px 16px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--panel-radius);
-  box-shadow: var(--panel-shadow);
-  scrollbar-width: thin;
+  padding: 0;
+  background: none;
+  border: 0;
+  pointer-events: none;
+  scrollbar-width: none;
 }
+.pds-settings::-webkit-scrollbar { display: none; }
+.pds-settings > * { pointer-events: auto; }
 .pds-settings.hidden { display: none; }
-/* the logo faded into the corner, as on the panels */
-.pds-settings::after {
+/* the logo faded into the last card's corner, as on the panels */
+.pds-support { position: relative; }
+.pds-support::after {
   content: '';
   position: absolute;
   right: 10px;
@@ -270,7 +274,8 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   font-size: 15px;
   font-weight: 600;
 }
@@ -289,9 +294,8 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 }
 .pds-close:hover { background: var(--surface2); color: var(--text); }
 
-.pds-group { padding: 12px 0 2px; border-top: 1px solid var(--border); margin-top: 10px; }
-.pds-group:first-of-type { border-top: 0; margin-top: 0; }
-.pds-group h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+/* the groups' last row or hint needs no space under it */
+.pds-group .pds-fold-inner > :last-child { margin-bottom: 0; }
 .pds-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .pds-label { flex: 0 0 86px; font-size: 12px; color: var(--text-muted); }
 .pds-row > .excl-seg { flex: 1; }
@@ -675,11 +679,10 @@ input[type="checkbox"] { accent-color: var(--accent); }
   --panel-radius:   22px;
 }
 [data-style="matte"] .panel-section { padding: 14px 16px; margin-bottom: 8px; }
-[data-style="matte"] .pds-settings { padding: 16px 18px 18px; }
 [data-style="matte"] .layer-row,
 [data-style="matte"] .pds-profile { border-color: transparent; border-radius: 14px; }
 [data-style="matte"] .preset-swatch { border-radius: 12px; }
-[data-style="matte"] .pds-settings::after { display: none; }
+[data-style="matte"] .pds-support::after { display: none; }
 /* chosen = tonal container + full-strength text (Material's secondary container) */
 [data-style="matte"] .excl-seg-btn.active,
 [data-style="matte"] .excl-tool-btn.active,
@@ -734,7 +737,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 [data-style="glass"] option { background-color: var(--option-bg); color: var(--text); }
 [data-style="glass"] .layer-row,
 [data-style="glass"] .pds-profile { border-radius: 12px; }
-[data-style="glass"] .pds-settings::after { display: none; }
+[data-style="glass"] .pds-support::after { display: none; }
 [data-style="glass"] .excl-seg-btn.active,
 [data-style="glass"] .vp-btn.active { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25); }
 
@@ -765,6 +768,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .pds-folded .pds-fold-chevron { transform: translateX(-2px) rotate(-45deg); }
 .pds-fold-body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);   /* the card's width, not its widest row's */
   grid-template-rows: 1fr;
   transition: grid-template-rows 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s;
 }

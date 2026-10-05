@@ -83,14 +83,14 @@
 
     <!-- Settings menu (the gear). Filled and wired by js/pdsSettings.js. -->
     <div id="pds-settings" class="pds-settings hidden" role="dialog" aria-labelledby="pds-settings-title">
-      <div class="pds-settings-head">
+      <div class="pds-settings-head panel-section">
         <img class="app-logo" src="logo.svg" alt="" width="22" height="22" />
         <span id="pds-settings-title">BumpMesh <span id="app-version" class="app-version"></span></span>
         <button id="pds-settings-close" class="pds-close" type="button" aria-label="Close">&#215;</button>
       </div>
 
-      <section class="pds-group">
-        <h3>Appearance</h3>
+      <section class="pds-group panel-section">
+        <h2>Appearance</h2>
         <div class="pds-row">
           <span class="pds-label">Style</span>
           <div id="pds-style-seg" class="excl-seg" role="group" aria-label="Panel style">
@@ -130,8 +130,8 @@
       </button>
       </section>
 
-      <section class="pds-group">
-        <h3>Profiles</h3>
+      <section class="pds-group panel-section">
+        <h2>Profiles</h2>
         <p class="pds-hint">A profile keeps every setting in the sidebar: layers, textures, projection, masking angles and export. Loading one keeps your model and its painted surfaces.</p>
         <div id="pds-profile-list" class="pds-profile-list"></div>
         <div class="pds-row pds-save-row">
@@ -146,8 +146,8 @@
         <p class="pds-hint">The default settings: a new session starts with them, and Reset goes back to them.</p>
       </section>
 
-      <section class="pds-group pds-beta">
-        <h3>Beta features</h3>
+      <section class="pds-group panel-section pds-beta">
+        <h2>Beta features</h2>
         <p class="pds-hint" data-i18n="ui.advancedBlurb">Experimental tools. Behavior may change between releases.</p>
         <div class="pds-beta-item" id="pds-beta-overhang">
           <h4 class="pds-beta-name" data-i18n="ui.noDownwardZHeading">Overhang Protection</h4>
@@ -181,8 +181,8 @@
         </div>
       </section>
 
-      <section class="pds-group pds-support">
-        <h3>Support &amp; about</h3>
+      <section class="pds-group panel-section pds-support">
+        <h2>Support &amp; about</h2>
         <p class="pds-hint">BumpMesh is made free by CNC Kitchen. Support them:</p>
         <div class="pds-links">
           <a class="pds-link" href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer">CNCKitchen.STORE</a>
