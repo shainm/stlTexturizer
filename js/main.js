@@ -37,6 +37,9 @@ import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS }
 import { getScaleReferenceLengths } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
+import { setDownloadSink, getDownloadSink } from './exporter.js';
+import { initPersonal } from './personal.js';
+import { setPreviewColors } from './previewMaterial.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1443,6 +1446,27 @@ function syncSmoothBottomToLimit() {
 
 // ── Event wiring ──────────────────────────────────────────────────────────────
 
+/** The thank-you / support overlay shown once an export starts (until "don't show again"). */
+function _showSponsorOverlay() {
+  if (sessionStorage.getItem('stlt-no-sponsor') === '1') return;
+  const overlay = document.getElementById('sponsor-overlay');
+  const closeBtn = document.getElementById('sponsor-close');
+  // Button plus the inline text link (the button may be hidden or removed by adblockers)
+  const storeLinks = overlay.querySelectorAll('a[href="https://geni.us/CNCStoreTexture"]');
+  overlay.classList.remove('hidden');
+  trapFocus(overlay);
+
+  const dismiss = () => {
+    if (document.getElementById('sponsor-dont-show').checked) {
+      sessionStorage.setItem('stlt-no-sponsor', '1');
+    }
+    overlay.classList.add('hidden');
+  };
+
+  closeBtn.onclick = dismiss;
+  storeLinks.forEach(a => { a.onclick = () => setTimeout(dismiss, 150); });
+}
+
 function wireEvents() {
   // ── Model loading ──
   stlFileInput.addEventListener('change', (e) => {
@@ -1808,27 +1832,11 @@ function wireEvents() {
     // sponsor overlay sits on top of a live progress bar instead of delaying
     // the work until it's dismissed.
     handleExport(format);
-
-    if (sessionStorage.getItem('stlt-no-sponsor') === '1') return;
-    const overlay = document.getElementById('sponsor-overlay');
-    const closeBtn = document.getElementById('sponsor-close');
-    // Button plus the inline text link (the button may be hidden or removed by adblockers)
-    const storeLinks = overlay.querySelectorAll('a[href="https://geni.us/CNCStoreTexture"]');
-    overlay.classList.remove('hidden');
-    trapFocus(overlay);
-
-    const dismiss = () => {
-      if (document.getElementById('sponsor-dont-show').checked) {
-        sessionStorage.setItem('stlt-no-sponsor', '1');
-      }
-      overlay.classList.add('hidden');
-    };
-
-    closeBtn.onclick = dismiss;
-    storeLinks.forEach(a => { a.onclick = () => setTimeout(dismiss, 150); });
+    _showSponsorOverlay();
   };
   exportBtn.addEventListener('click', () => startExport('stl'));
   export3mfBtn.addEventListener('click', () => startExport('3mf'));
+
   // Preview Export: run the real export pipeline and show its mesh (what the
   // file will contain, incl. export-only steps the live preview can't show).
   // A second click, or any change to the model or settings, goes back.
@@ -5108,16 +5116,19 @@ async function handleExport(format = 'stl') {
       ? `${currentStlName}_${texLabel}`
       : `${currentStlName}_${texLabel}_amp${ampLabel}`;
 
-    if (format === '3mf') {
-      setProgress(0.97, t('progress.writing3mf'));
-      await yieldFrame();
-      if (exportToken !== myToken) return;
-      await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken);
-    } else {
-      setProgress(0.97, t('progress.writingStl'));
-      await yieldFrame();
-      if (exportToken !== myToken) return;
-      exportSTL(finalGeometry, `${baseName}.stl`);
+    // `format` may list several formats; they share one pipeline run.
+    for (const f of (Array.isArray(format) ? format : [format])) {
+      if (f === '3mf') {
+        setProgress(0.97, t('progress.writing3mf'));
+        await yieldFrame();
+        if (exportToken !== myToken) return;
+        await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken);
+      } else {
+        setProgress(0.97, t('progress.writingStl'));
+        await yieldFrame();
+        if (exportToken !== myToken) return;
+        exportSTL(finalGeometry, `${baseName}.stl`);
+      }
     }
     exportSucceeded = true;
 
@@ -6105,71 +6116,80 @@ document.addEventListener('click', (e) => {
 exportGoBtn.addEventListener('click', async () => {
   exportDialog.classList.add('hidden');
   try {
-    const includeModel   = exportModelChk.checked && !!currentGeometry;
-    const activeCustom   = (activeMapEntry?.isCustom && activeMapEntry.fullCanvas) ? activeMapEntry : null;
-    // Legacy single-texture slot: the active layer's custom map, else the last
-    // upload (older readers activate it through activeMapName).
-    const customSource   = activeCustom || ((_lastCustomMap && _lastCustomMap.fullCanvas) ? _lastCustomMap : null);
-    const includeTexture = exportTextureChk.checked && !!customSource;
-    const payload = { version: PROJECT_VERSION, ...getSettingsSnapshot() };
-    delete payload.activeCustomId;   // a browser-local library id means nothing in another browser
-    for (const d of payload.layers) delete d.activeCustomId;
-    // Mark the custom map as the active reference so the importer restores it
-    // even if the user has a preset selected at export time.
-    if (includeTexture) payload.activeMapName = customSource.name;
-    // The bundled model is written in its ORIGINAL pose (issue #82), so the
-    // in-app rotation must ride along in the settings for the importer to
-    // replay — otherwise a saved session would lose its orientation.
-    if (includeModel && Math.abs(currentPoseRot.w) < 1 - 1e-12) {
-      payload.poseRotation = currentPoseRot.toArray();
-    }
-    const zipFiles = {};
-
-    if (includeModel) {
-      // Written in the original pose (issue #82); re-importing re-centers and
-      // replays poseRotation, so project round-trips stay stable.
-      zipFiles['model.stl'] = _geometryToBinarySTL(currentGeometry, true);
-      // The paint tree indexes the base geometry's triangles, so it only makes
-      // sense alongside the model that produced it. paint.json holds every
-      // layer's strokes; mask.json is the active layer's hard paint as a face
-      // list, what older readers expect.
-      if (paintTree) {
-        // Per-leaf-corner coverage: the import welds the STL's rounded
-        // coordinates afresh, and per-vertex coverage would not survive a
-        // regrouped vertex (#134).
-        const data = paintTree.serialize({ leafCov: true });
-        zipFiles['paint.json'] = strToU8(JSON.stringify(PaintTree.toJSON(data)));
-        payload.paint = 'paint.json';
-        const legacy = _legacyMaskOf(_activeSlot());
-        if (legacy) zipFiles['mask.json'] = strToU8(JSON.stringify(legacy));
-      }
-    }
-    if (includeTexture) {
-      const blob = await new Promise(r => customSource.fullCanvas.toBlob(r, 'image/png'));
-      zipFiles['texture.png'] = new Uint8Array(await blob.arrayBuffer());
-      // Per-layer custom maps (the active layer's is the same bytes as texture.png).
-      for (let i = 0; i < layers.length; i++) {
-        const entry = _layerMapEntry(i);
-        if (!(entry?.isCustom && entry.fullCanvas)) continue;
-        const fname = `texture-${i}.png`;
-        if (entry === customSource) zipFiles[fname] = zipFiles['texture.png'];
-        else {
-          const b2 = await new Promise(r => entry.fullCanvas.toBlob(r, 'image/png'));
-          zipFiles[fname] = new Uint8Array(await b2.arrayBuffer());
-        }
-        payload.layers[i].texture = fname;
-        payload.layers[i].activeMapName = entry.name;
-      }
-    }
-    zipFiles['settings.json'] = strToU8(JSON.stringify(payload, null, 2));
-
-    const zipped = zipSync(zipFiles);
+    const zipped = await _buildProjectZip(exportModelChk.checked, exportTextureChk.checked);
     _downloadBlob(new Blob([zipped], { type: 'application/octet-stream' }),
                   (currentStlName || 'bumpmesh') + '.bumpmesh');
   } catch (err) {
     alert(t('alerts.exportFailed', { msg: err.message }));
   }
 });
+
+/**
+ * Build the .bumpmesh project ZIP. `extra` (optional) is merged into
+ * settings.json — readers ignore keys they don't know.
+ * @returns {Promise<Uint8Array>}
+ */
+async function _buildProjectZip(wantModel, wantTexture, extra = null) {
+  const includeModel   = wantModel && !!currentGeometry;
+  const activeCustom   = (activeMapEntry?.isCustom && activeMapEntry.fullCanvas) ? activeMapEntry : null;
+  // Legacy single-texture slot: the active layer's custom map, else the last
+  // upload (older readers activate it through activeMapName).
+  const customSource   = activeCustom || ((_lastCustomMap && _lastCustomMap.fullCanvas) ? _lastCustomMap : null);
+  const includeTexture = wantTexture && !!customSource;
+  const payload = { version: PROJECT_VERSION, ...getSettingsSnapshot() };
+  delete payload.activeCustomId;   // a browser-local library id means nothing in another browser
+  for (const d of payload.layers) delete d.activeCustomId;
+  // Mark the custom map as the active reference so the importer restores it
+  // even if the user has a preset selected at export time.
+  if (includeTexture) payload.activeMapName = customSource.name;
+  // The bundled model is written in its ORIGINAL pose (issue #82), so the
+  // in-app rotation must ride along in the settings for the importer to
+  // replay — otherwise a saved session would lose its orientation.
+  if (includeModel && Math.abs(currentPoseRot.w) < 1 - 1e-12) {
+    payload.poseRotation = currentPoseRot.toArray();
+  }
+  const zipFiles = {};
+
+  if (includeModel) {
+    // Written in the original pose (issue #82); re-importing re-centers and
+    // replays poseRotation, so project round-trips stay stable.
+    zipFiles['model.stl'] = _geometryToBinarySTL(currentGeometry, true);
+    // The paint tree indexes the base geometry's triangles, so it only makes
+    // sense alongside the model that produced it. paint.json holds every
+    // layer's strokes; mask.json is the active layer's hard paint as a face
+    // list, what older readers expect.
+    if (paintTree) {
+      // Per-leaf-corner coverage: the import welds the STL's rounded
+      // coordinates afresh, and per-vertex coverage would not survive a
+      // regrouped vertex (#134).
+      const data = paintTree.serialize({ leafCov: true });
+      zipFiles['paint.json'] = strToU8(JSON.stringify(PaintTree.toJSON(data)));
+      payload.paint = 'paint.json';
+      const legacy = _legacyMaskOf(_activeSlot());
+      if (legacy) zipFiles['mask.json'] = strToU8(JSON.stringify(legacy));
+    }
+  }
+  if (includeTexture) {
+    const blob = await new Promise(r => customSource.fullCanvas.toBlob(r, 'image/png'));
+    zipFiles['texture.png'] = new Uint8Array(await blob.arrayBuffer());
+    // Per-layer custom maps (the active layer's is the same bytes as texture.png).
+    for (let i = 0; i < layers.length; i++) {
+      const entry = _layerMapEntry(i);
+      if (!(entry?.isCustom && entry.fullCanvas)) continue;
+      const fname = `texture-${i}.png`;
+      if (entry === customSource) zipFiles[fname] = zipFiles['texture.png'];
+      else {
+        const b2 = await new Promise(r => entry.fullCanvas.toBlob(r, 'image/png'));
+        zipFiles[fname] = new Uint8Array(await b2.arrayBuffer());
+      }
+      payload.layers[i].texture = fname;
+      payload.layers[i].activeMapName = entry.name;
+    }
+  }
+  if (extra) Object.assign(payload, extra);
+  zipFiles['settings.json'] = strToU8(JSON.stringify(payload, null, 2));
+  return zipSync(zipFiles);
+}
 
 /** Pack a BufferGeometry into binary-STL bytes (80-byte header, uint32 count, 50 bytes per triangle). With restorePose, vertices/normals are mapped back to the model's original file pose (see _restoreOriginalPose) without mutating the geometry. */
 function _geometryToBinarySTL(geo, restorePose = false) {
@@ -6226,6 +6246,8 @@ function _legacyMaskOf(slot) {
 }
 
 function _downloadBlob(blob, filename) {
+  const _downloadSink = getDownloadSink();
+  if (_downloadSink) { _downloadSink(blob, filename); return; }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -6669,3 +6691,21 @@ window.addEventListener('keydown', (e) => {
 _restoreSessionSettings();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
+
+// ── Personal edition (js/personal.js): unified Export, local files, colours ──
+initPersonal({
+  t,
+  importProject,
+  handleModelFile,
+  handleExport,
+  buildProjectZip: (extra) => _buildProjectZip(true, true, extra),
+  showSponsorOverlay: _showSponsorOverlay,
+  modelName: () => currentStlName,
+  hasModel: () => !!currentGeometry,
+  canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting && !isBaking,
+  textureNames: () => layers
+    .map((L, i) => (L.visible ? _layerMapEntry(i) : null))
+    .filter(Boolean)
+    .map(e => String(e.name)),
+  setPreviewColors: (textured, untextured) => { setPreviewColors(textured, untextured); _syncPreviewMaterial(); },
+});

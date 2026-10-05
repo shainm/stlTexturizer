@@ -1,5 +1,6 @@
-# Builds icon.ico from the app logo and puts "BumpMesh (My Version)" shortcuts
-# on the Desktop and in the Start menu (so Windows search finds it).
+# Builds icon.ico from the app logo, puts "BumpMesh (My Version)" shortcuts
+# on the Desktop and in the Start menu (so Windows search finds it), and
+# makes .bumpmesh project files open in it on double-click (current user only).
 # Re-run after moving the checkout. Pin to taskbar: right-click the Start-menu
 # entry > Pin to taskbar (Windows doesn't let scripts pin).
 $ErrorActionPreference = 'Stop'
@@ -51,3 +52,19 @@ foreach ($dir in $targets) {
   $lnk.Save()
   Write-Host "Shortcut: $($lnk.FullName)"
 }
+
+# .bumpmesh → launch.vbs "%1" (HKCU, no admin needed)
+$cls = 'HKCU:\Software\Classes'
+$prog = 'BumpMesh.Project'
+New-Item -Path "$cls\.bumpmesh" -Force | Out-Null
+Set-ItemProperty -Path "$cls\.bumpmesh" -Name '(default)' -Value $prog
+New-Item -Path "$cls\$prog\DefaultIcon" -Force | Out-Null
+Set-ItemProperty -Path "$cls\$prog" -Name '(default)' -Value 'BumpMesh Project'
+Set-ItemProperty -Path "$cls\$prog\DefaultIcon" -Name '(default)' -Value "$ico,0"
+New-Item -Path "$cls\$prog\shell\open\command" -Force | Out-Null
+$cmd = '"' + (Join-Path $env:WINDIR 'System32\wscript.exe') + '" "' + (Join-Path $here 'launch.vbs') + '" "%1"'
+Set-ItemProperty -Path "$cls\$prog\shell\open\command" -Name '(default)' -Value $cmd
+# Tell Explorer the associations changed.
+Add-Type -Namespace Win32 -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'
+[Win32.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+Write-Host "Associated .bumpmesh with $cmd"

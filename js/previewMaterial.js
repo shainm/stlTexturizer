@@ -6,6 +6,20 @@
 import * as THREE from 'three';
 import { scaleMmToRelative } from './mapping.js';
 
+// Preview colours (linear 0..1 RGB), changeable at runtime (setPreviewColors).
+const _previewColors = {
+  textured:   [0.22, 0.68, 0.68],  // teal
+  untextured: [0.85, 0.40, 0.15],  // orange
+};
+
+/** Set the preview colours; each is '#rrggbb' or an [r,g,b] 0..1 array. Takes effect on the next updateMaterial. */
+export function setPreviewColors(textured, untextured) {
+  const parse = (c) => Array.isArray(c) ? c
+    : [1, 3, 5].map(i => parseInt(String(c).slice(i, i + 2), 16) / 255);
+  if (textured)   _previewColors.textured   = parse(textured);
+  if (untextured) _previewColors.untextured = parse(untextured);
+}
+
 // Mapping mode constants (must match index.html <option value="…">)
 export const MODE_PLANAR_XY   = 0;
 export const MODE_PLANAR_XZ   = 1;
@@ -335,6 +349,8 @@ const fragmentShader = /* glsl */`
   uniform float     boundaryEdgeTexWidth;
   uniform float     boundaryFalloffDist;
   uniform int       boundaryFalloffCurve; // 0 = linear, 1 = s-curve, 2 = ease-in
+  uniform vec3      texturedColor;        // preview colour of textured surfaces
+  uniform vec3      untexturedColor;      // ...and of untextured ones (angle-masked: darker)
   uniform int       layeredTint;          // 1 = several layers: surfaces the active layer leaves alone are neutral grey
 
   varying vec3  vModelPos;
@@ -457,14 +473,14 @@ const fragmentShader = /* glsl */`
     // that specular highlights, diffuse response, and view-dependent shading
     // are perfectly consistent everywhere.  Mask tinting is applied AFTER
     // lighting as a colour blend so masked areas keep the same glossy look.
-    vec3 tealBase      = vec3(0.22, 0.68, 0.68);
+    vec3 tealBase      = texturedColor;
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
     // plain neutral grey, so "teal = active layer" reads at a glance and the
     // other layers' relief still shows through the shading.
     vec3 inactiveGrey  = vec3(0.55, 0.57, 0.59);
-    vec3 userMaskColor = layeredTint == 1 ? inactiveGrey : vec3(0.85, 0.40, 0.15);
-    vec3 angleMaskColor = layeredTint == 1 ? inactiveGrey : vec3(0.45, 0.48, 0.50);
+    vec3 userMaskColor = layeredTint == 1 ? inactiveGrey : untexturedColor;
+    vec3 angleMaskColor = layeredTint == 1 ? inactiveGrey : untexturedColor * 0.6;
 
     vec3 L1 = normalize(vec3( 0.5,  0.8,  1.0));
     vec3 L2 = normalize(vec3(-0.5, -0.2, -0.6));
@@ -586,6 +602,8 @@ export function updateMaterial(material, layers, settings) {
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
+  u.texturedColor.value.set(..._previewColors.textured);
+  u.untexturedColor.value.set(..._previewColors.untextured);
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -624,6 +642,8 @@ function buildUniforms() {
     boundaryFalloffDist:  { value: 0.0 },
     boundaryFalloffCurve: { value: 0 },
     layeredTint:          { value: 0 },
+    texturedColor:        { value: new THREE.Vector3(..._previewColors.textured) },
+    untexturedColor:      { value: new THREE.Vector3(..._previewColors.untextured) },
   };
 }
 

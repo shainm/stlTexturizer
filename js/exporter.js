@@ -13,8 +13,15 @@ import { zipChunks } from './zipStream.js';
  * @param {string} filename
  * @param {string} [mime]
  */
+// Optional replacement for the browser download: fn(blob, filename). Lets a
+// caller collect export files and write them somewhere itself.
+let _sink = null;
+export function setDownloadSink(fn) { _sink = fn || null; }
+export function getDownloadSink() { return _sink; }
+
 function triggerDownload(buffer, filename, mime = 'application/octet-stream') {
   const blob = buffer instanceof Blob ? buffer : new Blob([buffer], { type: mime });
+  if (_sink) { _sink(blob, filename); return; }
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
