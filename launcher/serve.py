@@ -59,6 +59,53 @@ def _dialog(kind, title, initial, filetypes=None):
     return os.path.normpath(path) if path else None
 
 
+def _explorer_windows():
+    """Folders of the open File Explorer windows and their selected files."""
+    import subprocess
+    ps = (
+        "$sh = New-Object -ComObject Shell.Application; "
+        "foreach ($w in $sh.Windows()) { try { $p = $w.Document.Folder.Self.Path; "
+        "if ($p) { 'D|' + $p; foreach ($i in $w.Document.SelectedItems()) { 'S|' + $i.Path } } } catch {} }"
+    )
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                             capture_output=True, text=True, timeout=8,
+                             creationflags=0x08000000)  # CREATE_NO_WINDOW
+    except (OSError, subprocess.SubprocessError):
+        return [], []
+    dirs, sel = [], []
+    for line in out.stdout.splitlines():
+        kind, _, path = line.partition("|")
+        (dirs if kind == "D" else sel).append(path.strip())
+    return dirs, sel
+
+
+def _locate(name, size, mtime_ms, extra_dirs):
+    """Where a file the browser only knows by name/size/date lives: selected
+    files in open Explorer windows first, then those windows' folders, then
+    the given folders, Desktop and Downloads (each also with its Original    subfolder). Size must match; a matching
+    modified time (within 2 s) wins over one that doesn't."""
+    dirs, sel = _explorer_windows()
+    home = os.path.expanduser("~")
+    cands = [p for p in sel if os.path.basename(p).lower() == name.lower()]
+    for d in dirs + list(extra_dirs or []) + [os.path.join(home, "Desktop"), os.path.join(home, "Downloads")]:
+        if d:
+            cands.append(os.path.join(d, name))
+            cands.append(os.path.join(d, "Original", name))  # a job folder's originals
+    fallback = None
+    for p in cands:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_size != size:
+            continue
+        if mtime_ms is None or abs(st.st_mtime * 1000 - mtime_ms) < 2000:
+            return os.path.normpath(p)
+        fallback = fallback or os.path.normpath(p)
+    return fallback
+
+
 def _stat(path):
     try:
         st = os.stat(path)
@@ -173,11 +220,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 else:
                     shutil.move(src, dst)
                 return self._json({"ok": True, "path": dst})
+            if route == "/api/locate":
+                return self._json({"path": _locate(args["name"], args["size"], args.get("mtime"), args.get("dirs"))})
             if route == "/api/open-folder":
                 os.startfile(args["path"])
                 return self._json({"ok": True})
-        except (OSError, KeyError) as e:
-            return self._json({"error": str(e)}, 500)
+        except Exception as e:  # any failure → an error reply, never a dropped connection
+            return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
         return self._json({"error": "not found"}, 404)
 
 

@@ -667,8 +667,13 @@ async function restoreAlign(app, info, isOwnProject) {
 
 async function openProject(app, path) {
   const bytes = await readFile(path);
-  const info = pdsInfo(bytes);
   await app.importProject(new File([bytes], basename(path)), { mode: 'all' }); // opening a project = its model too
+  await projectLocated(app, path, bytes);
+}
+
+/** A project (already loaded) lives at `path`: take over its job folder, original and line-up. */
+async function projectLocated(app, path, bytes) {
+  const info = pdsInfo(bytes || await readFile(path));
   adoptLocation(path);
   state.name = info?.name || stem(basename(path));
   state.originalPath = null;
@@ -684,6 +689,11 @@ async function openProject(app, path) {
 
 async function openModel(app, path) {
   await app.handleModelFile(new File([await readFile(path)], basename(path)));
+  await modelLocated(app, path);
+}
+
+/** A model (already loaded) lives at `path`: remember it, recognise its job folder. */
+async function modelLocated(app, path) {
   state.originalPath = path;
   state.name = stem(basename(path));
   state.align = null;
@@ -707,7 +717,7 @@ async function openModel(app, path) {
     const bytes = await readFile(shared);
     const info = pdsInfo(bytes);
     const c = await modal('Shared settings in this folder',
-      el('p', {}, `Apply the folder's shared settings${info?.from ? ` (from ${info.from}` : ' ('}saved ${new Date(s.mtime * 1000).toLocaleString()})${info?.align?.mode === 'modular' ? ', lined up for modular stacking' : info?.align?.assembly ? ', aligned to ' + basename(info.align.assembly) : ''}?`),
+      el('p', {}, `Apply the folder's shared settings${info?.from ? ` (from ${info.from}, ` : ' ('}saved ${new Date(s.mtime * 1000).toLocaleString()})${info?.align?.mode === 'modular' ? ', lined up for modular stacking' : info?.align?.assembly ? ', aligned to ' + basename(info.align.assembly) : ''}?`),
       [{ label: 'Not now', value: null }, { label: 'Apply', value: 1, primary: true }]);
     if (c) {
       await app.importProject(new File([bytes], SHARED_FILE)); // no model inside → settings only
@@ -717,6 +727,38 @@ async function openModel(app, path) {
 }
 
 const openPath = (app, path) => (/\.bumpmesh$/i.test(path) ? openProject(app, path) : openModel(app, path));
+
+/**
+ * Files dragged in: the browser gives only name, size and date, so ask the
+ * local server where such a file is (open Explorer windows, recent folders).
+ * Waits for main.js to finish loading the drop, then carries on as if it had
+ * been opened from that location.
+ */
+function watchDrops(app) {
+  document.addEventListener('drop', (e) => {
+    const files = [...(e.dataTransfer?.files || [])];
+    const f = files.find(x => /\.bumpmesh$/i.test(x.name)) || files.find(x => /\.(stl|obj|3mf|step|stp)$/i.test(x.name));
+    if (!f) return;
+    const isProject = /\.bumpmesh$/i.test(f.name);
+    (async () => {
+      const dirs = [state.dest, state.originalPath && dirname(state.originalPath), lsGet('dest', '')].filter(Boolean);
+      let path = null;
+      try { path = (await call('locate', { name: f.name, size: f.size, mtime: f.lastModified, dirs })).path; } catch {}
+      // Wait until the dropped file is the loaded one (STEP may sit in its import dialog).
+      const want = stem(f.name);
+      for (let i = 0; i < 600 && !isProject && app.modelName() !== want; i++) await new Promise(r => setTimeout(r, 100));
+      if (isProject) await new Promise(r => setTimeout(r, 1500));
+      if (!path) {
+        state.originalPath = null;
+        state.name = isProject ? stem(f.name) : want;
+        state.align = null; hideJointRings(); updateAlignStatus();
+        return;
+      }
+      if (isProject) await projectLocated(app, path);
+      else if (app.modelName() === want) await modelLocated(app, path);
+    })().catch(err => console.warn('[PDS] locating the dropped file failed:', err));
+  }, true);
+}
 
 function interceptPickers(app) {
   const hook = (selector, title, types) => {
@@ -824,7 +866,28 @@ async function exportDialog(app) {
   }
 }
 
+/**
+ * Bring a job folder from before the rename up to date: "project files" →
+ * "Texture Settings", "textured" → "Textured" (a case-only rename goes
+ * through a temporary name; Windows paths ignore case).
+ */
+async function migrateFolders(dest) {
+  const names = (await call('list', { dir: dest })).items.filter(i => i.isDir).map(i => i.name);
+  if (names.includes(LEGACY_PROJECT) && !names.some(n => n.toLowerCase() === SUB.project.toLowerCase())) {
+    await call('move', { src: join(dest, LEGACY_PROJECT), dst: join(dest, SUB.project) });
+  }
+  for (const target of [SUB.textured, SUB.original]) {
+    const cur = names.find(n => n.toLowerCase() === target.toLowerCase());
+    if (cur && cur !== target) {
+      const tmp = join(dest, `${target}.renaming`);
+      await call('move', { src: join(dest, cur), dst: tmp });
+      await call('move', { src: tmp, dst: join(dest, target) });
+    }
+  }
+}
+
 async function runExport(app, { format, project, shared, originalMode }) {
+  await migrateFolders(state.dest);
   const name = safe(state.name), tl = textureLabel(app);
   const texturedDir = join(state.dest, SUB.textured);
   const target = format ? join(texturedDir, `${name}_${tl}.${format}`) : null;
@@ -942,6 +1005,7 @@ export async function initPersonal(app) {
   initColours(app);
   if (!(await connect())) return; // plain web page: no local file features
   interceptPickers(app);
+  watchDrops(app);
   initExportButton(app);
   initAlignControl(app);
   openFromLaunch(app);
