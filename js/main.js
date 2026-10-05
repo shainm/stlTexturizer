@@ -6747,6 +6747,7 @@ initPersonal({
     if (endExportPreview()) _syncPreviewExportBtn();
   },
   poseRotated: () => Math.abs(currentPoseRot.w) < 1 - 1e-12,
+  poseTrans: () => ({ x: currentPoseTrans.x, y: currentPoseTrans.y, z: currentPoseTrans.z }), // working = file + this
   modelFileBounds: () => {
     // The loaded model's bounds in its FILE coordinates (working − t).
     if (!currentBounds) return null;

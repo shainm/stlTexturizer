@@ -33,6 +33,8 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink } from './exporter.js';
+import { THREE } from './threeCompat.js';
+import { getCamera, getRenderer, getCurrentMesh, setDiagEdges } from './viewer.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -154,6 +156,9 @@ function injectStyle() {
     .pds-colors label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
     .pds-colors input[type=color] { width: 22px; height: 18px; padding: 0; border: 1px solid var(--border);
       border-radius: 4px; background: none; cursor: pointer; }
+    .pds-pick { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 10001;
+      background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.4); pointer-events: none; }
     .pds-align { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; }
     .pds-align .muted { color: var(--text-muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `));
@@ -348,6 +353,106 @@ function countTabs(pos, axis, seat, pitch) {
   return runs;
 }
 
+// ── Joint edges: sharp edges, picking, rings ───────────────────────────────
+/**
+ * Sharp edges of the model (dihedral > 30°, or open), as segments in FILE
+ * coordinates [x0,y0,z0,x1,y1,z1, ...]. Cached per model.
+ */
+let _sharpCache = { key: null, segs: null };
+function sharpEdges(pos) {
+  const key = pos.length + ':' + pos[0] + ':' + pos[pos.length - 1];
+  if (_sharpCache.key === key) return _sharpCache.segs;
+  const G = 1e4, vk = (i) => `${Math.round(pos[i] * G)},${Math.round(pos[i + 1] * G)},${Math.round(pos[i + 2] * G)}`;
+  const nT = pos.length / 9, fn = new Float64Array(nT * 3), edges = new Map();
+  for (let t = 0; t < nT; t++) {
+    const p = t * 9;
+    const ux = pos[p + 3] - pos[p], uy = pos[p + 4] - pos[p + 1], uz = pos[p + 5] - pos[p + 2];
+    const vx = pos[p + 6] - pos[p], vy = pos[p + 7] - pos[p + 1], vz = pos[p + 8] - pos[p + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz) || 1;
+    fn[t * 3] = nx / l; fn[t * 3 + 1] = ny / l; fn[t * 3 + 2] = nz / l;
+    for (let e = 0; e < 3; e++) {
+      const a = p + e * 3, b = p + ((e + 1) % 3) * 3, ka = vk(a), kb = vk(b);
+      const k = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+      let r = edges.get(k); if (!r) edges.set(k, r = { a, b, tris: [] });
+      r.tris.push(t);
+    }
+  }
+  const cos30 = Math.cos(30 * Math.PI / 180), segs = [];
+  for (const r of edges.values()) {
+    let sharp = r.tris.length !== 2;
+    if (!sharp) { const [t0, t1] = r.tris; sharp = fn[t0 * 3] * fn[t1 * 3] + fn[t0 * 3 + 1] * fn[t1 * 3 + 1] + fn[t0 * 3 + 2] * fn[t1 * 3 + 2] < cos30; }
+    if (sharp) segs.push(pos[r.a], pos[r.a + 1], pos[r.a + 2], pos[r.b], pos[r.b + 1], pos[r.b + 2]);
+  }
+  _sharpCache = { key, segs: new Float32Array(segs) };
+  return _sharpCache.segs;
+}
+
+/** Sharp edges lying level at height z (file coords), for the ring display. */
+function ringAt(segs, z, tol = 0.05) {
+  const out = [];
+  for (let i = 0; i < segs.length; i += 6) {
+    if (Math.abs(segs[i + 2] - z) <= tol && Math.abs(segs[i + 5] - z) <= tol) for (let k = 0; k < 6; k++) out.push(segs[i + k]);
+  }
+  return out;
+}
+
+/** Show the joint rings (seat and next-part heights) on the model. */
+function showJointRings(app, seat, top) {
+  const pos = app.modelFilePositions();
+  if (!pos) return;
+  const segs = sharpEdges(pos), t = app.poseTrans();
+  const ring = [...ringAt(segs, seat), ...(top != null ? ringAt(segs, top) : [])];
+  for (let i = 0; i < ring.length; i += 3) { ring[i] += t.x; ring[i + 1] += t.y; ring[i + 2] += t.z; }
+  setDiagEdges(ring.length ? new Float32Array(ring) : null, 0xffd400);
+}
+const hideJointRings = () => setDiagEdges(null);
+
+/**
+ * Let the user click a joint edge on the model. Resolves to the height (file
+ * z) of the nearest level sharp edge within 5 mm of the click, else the
+ * clicked point's height; null on Escape.
+ */
+function pickEdgeHeight(app, prompt) {
+  return new Promise((resolve) => {
+    const canvas = getRenderer().domElement;
+    const banner = el('div', { class: 'pds-pick' }, prompt + '  (Esc to cancel)');
+    document.body.append(banner);
+    const finish = (v) => {
+      canvas.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      banner.remove();
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); finish(null); } };
+    const onDown = (e) => {
+      if (e.button !== 0) return; // right/middle drag still orbit/pan
+      e.preventDefault(); e.stopImmediatePropagation();
+      const mesh = getCurrentMesh(), rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(ndc, getCamera());
+      const hit = mesh && ray.intersectObject(mesh, false)[0];
+      if (!hit) return; // missed the model: keep waiting
+      const local = mesh.worldToLocal(hit.point.clone()), t = app.poseTrans();
+      const p = { x: local.x - t.x, y: local.y - t.y, z: local.z - t.z };
+      // Snap to the nearest level sharp edge.
+      const segs = sharpEdges(app.modelFilePositions());
+      let best = 25, z = p.z; // 5 mm squared
+      for (let i = 0; i < segs.length; i += 6) {
+        if (Math.abs(segs[i + 2] - segs[i + 5]) > 0.05) continue;
+        const ax = segs[i], ay = segs[i + 1], bx = segs[i + 3], by = segs[i + 4], az = segs[i + 2];
+        const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+        const w = L2 > 0 ? Math.max(0, Math.min(1, ((p.x - ax) * dx + (p.y - ay) * dy) / L2)) : 0;
+        const d2 = (ax + w * dx - p.x) ** 2 + (ay + w * dy - p.y) ** 2 + (az - p.z) ** 2;
+        if (d2 < best) { best = d2; z = az; }
+      }
+      finish(z);
+    };
+    canvas.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+  });
+}
+
 // ── Modular alignment ──────────────────────────────────────────────────────
 /**
  * Lay the texture out for modular stacking: anchored at this part's seat, the
@@ -375,6 +480,7 @@ function alignModular(app, cfg, opts = {}) {
     modular: { pitch, positions: cfg.rotate ? positions : 1 },
   };
   state.align = { mode: 'modular', frame, seat, pitch, xy, rotate: !!cfg.rotate, positions };
+  showJointRings(app, seat, pitch > 0 ? seat + pitch : null);
   app.setTextureFrame(frame);
   updateAlignStatus();
   return true;
@@ -419,6 +525,7 @@ async function alignTo(app, assemblyPath, { quiet = false, zOverride = null } = 
 
 function clearAlign(app) {
   state.align = null;
+  hideJointRings();
   app.setTextureFrame(null);
   updateAlignStatus();
 }
@@ -464,7 +571,11 @@ async function alignDialog(app) {
     el('div', { class: 'row opts' }, radio('modular', 'Modular — any combination of parts'), radio('assembly', 'One assembly file')),
     el('hr'),
     el('p', {}, "Modular: each part's texture starts at its seat and fits a whole number of repeats up to where the next part rests, so every joint matches whatever the order. Give every part the same texture settings (the folder's shared settings) and line each one up."),
-    el('div', { class: 'row' }, el('label', {}, 'Seat (bottom) at'), seatIn, el('span', {}, 'mm;  next part rests'), pitchIn, el('span', {}, 'mm above it')),
+    el('div', { class: 'row' }, el('label', {}, 'Bottom joint edge at'), seatIn, el('span', {}, 'mm'),
+      el('button', { class: 'pds-btn', onclick: (e) => pickInto(e, 'bottom') }, 'Pick edge…')),
+    el('div', { class: 'row' }, el('label', {}, 'Top joint edge'), pitchIn, el('span', {}, 'mm above it'),
+      el('button', { class: 'pds-btn', onclick: (e) => pickInto(e, 'top') }, 'Pick edge…')),
+    el('p', { class: 'muted' }, 'The joint edges are the level edges where this part meets the parts below and above (shown in yellow). Pick them on the model if the detected ones are wrong.'),
     el('p', { class: 'muted' }, `Detected: next part at ${d.pitch.toFixed(2)} mm${tabs ? `, ${tabs} tabs` : ''}. On the top piece this is where a cap would sit.`),
     el('div', { class: 'row' }, el('label', {}, rotate, ' Parts may sit rotated by one tab position —'), posIn, el('span', {}, 'positions')),
     !cyl ? el('p', { class: 'muted' }, 'Rotation only works with Cylindrical projection (Mode).') : null,
@@ -472,11 +583,36 @@ async function alignDialog(app) {
     el('hr'),
     el('p', { class: 'muted' }, 'One assembly file: lines the texture up exactly as the parts sit in an assembly STL (an exploded one is stacked first).'),
     a ? el('p', { class: 'muted' }, `Now: ${_alignStatus?.textContent || ''}`) : null);
+  const rings = () => {
+    const seat = parseFloat(seatIn.value), pitch = parseFloat(pitchIn.value);
+    if (Number.isFinite(seat)) showJointRings(app, seat, Number.isFinite(pitch) && pitch > 0 ? seat + pitch : null);
+  };
+  // Hide the dialog, let the user click an edge, put the height in the field.
+  async function pickInto(e, which) {
+    const overlay = e.target.closest('.pds-modal');
+    overlay.style.display = 'none';
+    const z = await pickEdgeHeight(app, which === 'bottom'
+      ? 'Click the edge where this part sits on the part below'
+      : 'Click the edge where the next part sits on this one');
+    overlay.style.display = '';
+    if (z == null) return;
+    const seat = parseFloat(seatIn.value);
+    if (which === 'bottom') {
+      const top = Number.isFinite(seat) ? seat + (parseFloat(pitchIn.value) || 0) : null;
+      seatIn.value = z.toFixed(2);
+      if (top != null) pitchIn.value = Math.max(0, top - z).toFixed(2);
+    } else pitchIn.value = Math.max(0, z - (Number.isFinite(seat) ? seat : 0)).toFixed(2);
+    rings();
+  }
+  seatIn.addEventListener('change', rings);
+  pitchIn.addEventListener('change', rings);
+  rings();
   const choice = await modal('Line up parts', body, [
     { label: 'Cancel', value: null },
     a ? { label: 'Remove', value: 'clear' } : null,
     { label: 'Apply', value: 'apply', primary: true },
   ].filter(Boolean));
+  if (choice !== 'apply' || body.querySelector('input[name="pds-align-mode"]:checked').value !== 'modular') hideJointRings();
   if (choice === 'clear') return clearAlign(app);
   if (choice !== 'apply') return;
   const mode = body.querySelector('input[name="pds-align-mode"]:checked').value;
@@ -517,6 +653,7 @@ async function restoreAlign(app, info, isOwnProject) {
   if (isOwnProject && a.frame) {
     state.align = a;
     app.setTextureFrame(a.frame);
+    if (a.mode === 'modular') showJointRings(app, a.seat, a.pitch > 0 ? a.seat + a.pitch : null);
     updateAlignStatus();
     return;
   }
@@ -533,6 +670,7 @@ async function openProject(app, path) {
   state.name = info?.name || stem(basename(path));
   state.originalPath = null;
   state.align = null;
+  hideJointRings();
   updateAlignStatus();
   if (info?.originalFile) {
     const cand = join(state.dest, SUB.original, info.originalFile);
@@ -546,6 +684,7 @@ async function openModel(app, path) {
   state.originalPath = path;
   state.name = stem(basename(path));
   state.align = null;
+  hideJointRings();
   updateAlignStatus();
   adoptLocation(path);
 
@@ -803,4 +942,4 @@ export async function initPersonal(app) {
 }
 
 // For tests (debug harness): pure helpers.
-export const _test = { locateInAssembly, stackAssembly, stackDatums, countTabs, parseSTL, safe };
+export const _test = { locateInAssembly, stackAssembly, stackDatums, countTabs, sharpEdges, ringAt, parseSTL, safe };
