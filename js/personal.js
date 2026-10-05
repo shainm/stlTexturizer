@@ -261,11 +261,9 @@ function locateInAssembly(part, asm) {
 
 /**
  * Stack an exploded assembly: split it into parts (connected shells, merged
- * when their heights overlap), then lower each part, bottom up, straight down
- * until it rests on the parts below. Contact is found on height maps (0.5 mm
- * cells): the lower stack's top surface against the part's underside, so tabs
- * going up into slots are fine. Returns each part's z range (as exploded) and
- * the z shift that stacks it.
+ * when their heights overlap), then set each part, bottom up, on the one
+ * below at that part's rim (stackDatums). Returns each part's z range (as
+ * exploded) and the z shift that stacks it.
  */
 function stackAssembly(asm) {
   const G = 20, key = (i) => `${Math.round(asm[i] * G)},${Math.round(asm[i + 1] * G)},${Math.round(asm[i + 2] * G)}`;
@@ -290,35 +288,20 @@ function stackAssembly(asm) {
     else groups.push({ tris: [...s.tris], zmin: s.zmin, zmax: s.zmax });
   }
   if (groups.length < 2) return { groups: groups.map(g => ({ zmin: g.zmin, zmax: g.zmax, shift: 0 })) };
-  // Height maps over the XY footprint.
+  // Each part rests where the one below's top runs all the way round (its
+  // seat + pitch, stackDatums) — tabs and slots don't hold it up.
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let i = 0; i < asm.length; i += 3) { x0 = Math.min(x0, asm[i]); x1 = Math.max(x1, asm[i]); y0 = Math.min(y0, asm[i + 1]); y1 = Math.max(y1, asm[i + 1]); }
-  const C = 0.5, W = Math.ceil((x1 - x0) / C) + 1, H = Math.ceil((y1 - y0) / C) + 1;
-  const raster = (tris, shift, top) => {
-    const m = new Float32Array(W * H).fill(top ? -Infinity : Infinity);
-    for (const t of tris) {
-      const p = t * 9;
-      const e = Math.max(Math.hypot(asm[p + 3] - asm[p], asm[p + 4] - asm[p + 1]), Math.hypot(asm[p + 6] - asm[p], asm[p + 7] - asm[p + 1]), Math.hypot(asm[p + 6] - asm[p + 3], asm[p + 7] - asm[p + 4]));
-      const n = Math.max(1, Math.ceil(e / (C * 0.5)));
-      for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
-        const a = i / n, b = j / n, c = 1 - a - b;
-        const x = asm[p] * c + asm[p + 3] * a + asm[p + 6] * b, y = asm[p + 1] * c + asm[p + 4] * a + asm[p + 7] * b;
-        const z = asm[p + 2] * c + asm[p + 5] * a + asm[p + 8] * b + shift;
-        const k = Math.round((y - y0) / C) * W + Math.round((x - x0) / C);
-        if (top ? z > m[k] : z < m[k]) m[k] = z;
-      }
-    }
-    return m;
-  };
+  const axis = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  for (const g of groups) {
+    const pos = new Float32Array(g.tris.length * 9);
+    g.tris.forEach((t, k) => pos.set(asm.subarray(t * 9, t * 9 + 9), k * 9));
+    g.pitch = stackDatums(pos, axis).pitch;
+  }
   groups[0].shift = 0;
-  let stackTop = raster(groups[0].tris, 0, true);
   for (let g = 1; g < groups.length; g++) {
-    const bot = raster(groups[g].tris, 0, false);
-    let gap = Infinity;
-    for (let k = 0; k < bot.length; k++) if (bot[k] !== Infinity && stackTop[k] !== -Infinity) gap = Math.min(gap, bot[k] - stackTop[k]);
-    groups[g].shift = gap === Infinity ? 0 : -gap;
-    const top = raster(groups[g].tris, groups[g].shift, true);
-    for (let k = 0; k < top.length; k++) if (top[k] > stackTop[k]) stackTop[k] = top[k];
+    const below = groups[g - 1];
+    groups[g].shift = (below.zmin + below.shift + below.pitch) - groups[g].zmin;
   }
   return { groups: groups.map(g => ({ zmin: g.zmin, zmax: g.zmax, shift: g.shift })) };
 }
@@ -331,6 +314,72 @@ const _asmCache = new Map(); // path → { asm, stack }
  * texture lines up as assembled. `zOverride` (mm) replaces the part's height
  * in the stack when the automatic stacking seats it wrong.
  */
+/**
+ * Modular stacking datums of a part (file coordinates): its seat (lowest z,
+ * where it rests on the part below) and how far above the seat the next part
+ * rests: the part's top all the way around — the median over 72 sectors
+ * around the axis of each sector's highest point, so tabs (a minority of
+ * sectors) and small notches don't count.
+ * @returns {{ seat:number, pitch:number }}
+ */
+function stackDatums(pos, axis) {
+  let seat = Infinity;
+  const top = new Float64Array(72).fill(-Infinity);
+  for (let i = 0; i < pos.length; i += 3) {
+    seat = Math.min(seat, pos[i + 2]);
+    const s = (Math.floor((Math.atan2(pos[i + 1] - axis.y, pos[i] - axis.x) + Math.PI) / (2 * Math.PI) * 72) + 72) % 72;
+    if (pos[i + 2] > top[s]) top[s] = pos[i + 2];
+  }
+  const vals = [...top].filter(Number.isFinite).sort((a, b) => a - b);
+  const rim = vals.length ? vals[Math.floor(vals.length / 2)] : seat;
+  return { seat, pitch: Math.max(0, rim - seat) };
+}
+
+/** Tabs rising above the rim: runs of sectors whose top is >= 1 mm above it. */
+function countTabs(pos, axis, seat, pitch) {
+  const top = new Float64Array(72).fill(-Infinity);
+  for (let i = 0; i < pos.length; i += 3) {
+    const s = (Math.floor((Math.atan2(pos[i + 1] - axis.y, pos[i] - axis.x) + Math.PI) / (2 * Math.PI) * 72) + 72) % 72;
+    if (pos[i + 2] > top[s]) top[s] = pos[i + 2];
+  }
+  const up = [...top].map(z => z > seat + pitch + 1);
+  let runs = 0;
+  for (let k = 0; k < 72; k++) if (up[k] && !up[(k + 71) % 72]) runs++;
+  return runs;
+}
+
+// ── Modular alignment ──────────────────────────────────────────────────────
+/**
+ * Lay the texture out for modular stacking: anchored at this part's seat, the
+ * tile height fitted to its pitch (mapping.js), around an axis shared by all
+ * parts (`xy`, file coordinates — parts must be exported in the same XY
+ * frame). `opts` overrides the detected seat/pitch.
+ */
+function fileXY(app) {
+  const b = app.modelFileBounds();
+  return { min: { x: b.min.x, y: b.min.y }, size: { x: b.size.x, y: b.size.y } };
+}
+
+function alignModular(app, cfg, opts = {}) {
+  if (app.poseRotated()) return false;
+  const pos = app.modelFilePositions();
+  if (!pos) return false;
+  const xy = cfg.xy || fileXY(app);
+  const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
+  const d = stackDatums(pos, axis);
+  const seat = opts.seat ?? d.seat, pitch = opts.pitch ?? d.pitch;
+  const positions = cfg.positions || countTabs(pos, axis, d.seat, d.pitch) || 3;
+  const frame = {
+    min: { x: xy.min.x, y: xy.min.y, z: seat },
+    size: { x: xy.size.x, y: xy.size.y, z: Math.max(pitch, 1) },
+    modular: { pitch, positions: cfg.rotate ? positions : 1 },
+  };
+  state.align = { mode: 'modular', frame, seat, pitch, xy, rotate: !!cfg.rotate, positions };
+  app.setTextureFrame(frame);
+  updateAlignStatus();
+  return true;
+}
+
 async function alignTo(app, assemblyPath, { quiet = false, zOverride = null } = {}) {
   if (app.poseRotated()) {
     if (!quiet) await notice('Align texture', 'The model is rotated in the app. Alignment needs the model in its file orientation — reset the rotation, then align.');
@@ -362,7 +411,7 @@ async function alignTo(app, assemblyPath, { quiet = false, zOverride = null } = 
     min: { x: asmMin.x - offset.x, y: asmMin.y - offset.y, z: zmin - offset.z },
     size: { x: found.frame.size.x, y: found.frame.size.y, z: zmax - zmin },
   };
-  state.align = { assembly: assemblyPath, frame, offset, height: pz + offset.z, stacked: groups.length > 1, zOverride };
+  state.align = { mode: 'assembly', assembly: assemblyPath, frame, offset, height: pz + offset.z, stacked: groups.length > 1, zOverride };
   app.setTextureFrame(frame);
   updateAlignStatus();
   return true;
@@ -378,44 +427,75 @@ let _alignStatus = null;
 function updateAlignStatus() {
   if (!_alignStatus) return;
   const a = state.align;
-  _alignStatus.textContent = a
-    ? `Aligned to ${basename(a.assembly)} — sits at ${a.height.toFixed(2)} mm${a.stacked ? ' (stacked)' : ''}`
-    : 'Texture laid out on this model alone';
-  _alignStatus.title = a ? a.assembly : '';
+  _alignStatus.textContent = !a ? 'Texture laid out on this model alone'
+    : a.mode === 'modular' ? `Modular: next part at ${a.pitch.toFixed(2)} mm${a.rotate ? `, ${a.positions} positions` : ''}`
+    : `Aligned to ${basename(a.assembly)} — sits at ${a.height.toFixed(2)} mm${a.stacked ? ' (stacked)' : ''}`;
+  _alignStatus.title = a?.assembly || '';
 }
 
 function initAlignControl(app) {
   const anchor = document.getElementById('mapping-mode')?.closest('.form-row') || document.getElementById('mapping-mode')?.parentElement;
   if (!anchor) return;
   _alignStatus = el('span', { class: 'muted' });
-  const btn = el('button', { class: 'pds-btn', title: 'Lay the texture out in an assembly\'s frame so parts printed separately line up' }, 'Align to assembly…');
+  const btn = el('button', { class: 'pds-btn', title: 'Line the texture up across parts printed separately (modular stacking or one assembly)' }, 'Line up parts…');
   btn.addEventListener('click', () => alignDialog(app).catch(err => notice('Align texture', err.message)));
   anchor.after(el('div', { class: 'pds-align' }, btn, _alignStatus));
   updateAlignStatus();
 }
 
 async function alignDialog(app) {
+  const a = state.align;
+  const pos = app.modelFilePositions();
+  if (!pos) { await notice('Line up parts', 'The model is rotated in the app. Lining up needs it in its file orientation — reset the rotation first.'); return; }
+  // Detected values for this part (shared axis if one is set).
+  const xy = a?.xy || fileXY(app);
+  const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
+  const d = stackDatums(pos, axis);
+  const tabs = countTabs(pos, axis, d.seat, d.pitch);
+  const num = (v) => el('input', { type: 'text', value: v.toFixed(2), style: 'max-width:80px;flex:none' });
+  const seatIn = num(a?.mode === 'modular' ? a.seat : d.seat);
+  const pitchIn = num(a?.mode === 'modular' ? a.pitch : d.pitch);
+  const rotate = el('input', { type: 'checkbox', checked: a?.mode === 'modular' ? a.rotate : false });
+  const posIn = el('input', { type: 'text', value: String(a?.positions || tabs || 3), style: 'max-width:40px;flex:none' });
+  const modeVal = a?.mode === 'assembly' ? 'assembly' : 'modular';
+  const radio = (v, label) => el('label', {}, el('input', { type: 'radio', name: 'pds-align-mode', value: v, checked: v === modeVal }), ' ' + label);
+  const cyl = document.getElementById('mapping-mode')?.value === '3';
   const body = el('div', {},
-    el('p', {}, 'Pick the assembly STL (all parts in their assembled positions). The texture is then laid out in the assembly\'s space, so this part continues the texture of the parts around it.'),
-    el('p', { class: 'muted' }, 'Use the same texture settings on every part — the folder\'s shared settings do that — and align each one. Parts must sit in the assembly unrotated.'),
-    state.align ? el('p', {}, `Now: ${state.align.assembly}`) : null);
-  const choice = await modal('Align texture to assembly', body, [
+    el('div', { class: 'row opts' }, radio('modular', 'Modular — any combination of parts'), radio('assembly', 'One assembly file')),
+    el('hr'),
+    el('p', {}, "Modular: each part's texture starts at its seat and fits a whole number of repeats up to where the next part rests, so every joint matches whatever the order. Give every part the same texture settings (the folder's shared settings) and line each one up."),
+    el('div', { class: 'row' }, el('label', {}, 'Seat (bottom) at'), seatIn, el('span', {}, 'mm;  next part rests'), pitchIn, el('span', {}, 'mm above it')),
+    el('p', { class: 'muted' }, `Detected: next part at ${d.pitch.toFixed(2)} mm${tabs ? `, ${tabs} tabs` : ''}. On the top piece this is where a cap would sit.`),
+    el('div', { class: 'row' }, el('label', {}, rotate, ' Parts may sit rotated by one tab position —'), posIn, el('span', {}, 'positions')),
+    !cyl ? el('p', { class: 'muted' }, 'Rotation only works with Cylindrical projection (Mode).') : null,
+    el('p', { class: 'muted' }, 'All parts must be exported around the same axis (same XY coordinates), as CAD exports of one assembly are.'),
+    el('hr'),
+    el('p', { class: 'muted' }, 'One assembly file: lines the texture up exactly as the parts sit in an assembly STL (an exploded one is stacked first).'),
+    a ? el('p', { class: 'muted' }, `Now: ${_alignStatus?.textContent || ''}`) : null);
+  const choice = await modal('Line up parts', body, [
     { label: 'Cancel', value: null },
-    state.align ? { label: 'Remove alignment', value: 'clear' } : null,
-    { label: 'Choose assembly…', value: 'pick', primary: true },
+    a ? { label: 'Remove', value: 'clear' } : null,
+    { label: 'Apply', value: 'apply', primary: true },
   ].filter(Boolean));
   if (choice === 'clear') return clearAlign(app);
-  if (choice !== 'pick') return;
+  if (choice !== 'apply') return;
+  const mode = body.querySelector('input[name="pds-align-mode"]:checked').value;
+  if (mode === 'modular') {
+    const seat = parseFloat(seatIn.value), pitch = parseFloat(pitchIn.value);
+    alignModular(app, { xy, rotate: rotate.checked, positions: Math.max(1, parseInt(posIn.value, 10) || 1) },
+      { seat: Number.isFinite(seat) ? seat : undefined, pitch: Number.isFinite(pitch) ? pitch : undefined });
+    return;
+  }
   const { path } = await call('pick-file', { title: 'Choose the assembly STL', types: [['STL', '*.stl'], ['All files', '*.*']],
-    initial: state.align?.assembly || (state.dest && join(state.dest, SUB.original)) || state.dest });
+    initial: a?.assembly || state.dest });
   if (!path || !(await alignTo(app, path))) return;
   const h = el('input', { type: 'text', value: state.align.height.toFixed(2), style: 'max-width:90px;flex:none' });
-  const ok = await modal('Align texture', el('div', {},
+  const ok = await modal('Line up parts', el('div', {},
     el('p', {}, state.align.stacked
-      ? 'The assembly is exploded, so its parts were stacked: each one lowered straight down until it rests on the part below.'
+      ? 'The assembly is exploded, so its parts were stacked: each one set on the rim of the part below.'
       : 'Found this part in the assembly.'),
     el('div', { class: 'row' }, el('label', {}, "This part's bottom sits at "), h, el('span', {}, ' mm in the stack')),
-    el('p', { class: 'muted' }, 'If it really seats lower or higher (e.g. a twist lock), type the height. Every part of the assembly needs the same texture settings and its own alignment.')),
+    el('p', { class: 'muted' }, 'If it really seats lower or higher, type the height.')),
     [{ label: 'OK', value: 1, primary: true }]);
   const v = parseFloat(h.value);
   if (ok && Number.isFinite(v) && Math.abs(v - state.align.height) > 1e-3) await alignTo(app, path, { zOverride: v });
@@ -433,15 +513,16 @@ function pdsInfo(bytes) {
 /** Re-apply alignment saved with a project / shared settings. */
 async function restoreAlign(app, info, isOwnProject) {
   const a = info?.align;
-  if (!a?.assembly) return;
+  if (!a) return;
   if (isOwnProject && a.frame) {
     state.align = a;
     app.setTextureFrame(a.frame);
     updateAlignStatus();
     return;
   }
-  // Shared settings: the frame is per part — find this part in the assembly.
-  if ((await exists(a.assembly)).exists) await alignTo(app, a.assembly, { quiet: true });
+  // Shared settings: the frame is per part — work it out for this one.
+  if (a.mode === 'modular') alignModular(app, a);
+  else if (a.assembly && (await exists(a.assembly)).exists) await alignTo(app, a.assembly, { quiet: true });
 }
 
 async function openProject(app, path) {
@@ -481,7 +562,7 @@ async function openModel(app, path) {
     const bytes = await readFile(shared);
     const info = pdsInfo(bytes);
     const c = await modal('Shared settings in this folder',
-      el('p', {}, `Apply the folder's shared settings${info?.from ? ` (from ${info.from}` : ' ('}saved ${new Date(s.mtime * 1000).toLocaleString()})${info?.align?.assembly ? ', aligned to ' + basename(info.align.assembly) : ''}?`),
+      el('p', {}, `Apply the folder's shared settings${info?.from ? ` (from ${info.from}` : ' ('}saved ${new Date(s.mtime * 1000).toLocaleString()})${info?.align?.mode === 'modular' ? ', lined up for modular stacking' : info?.align?.assembly ? ', aligned to ' + basename(info.align.assembly) : ''}?`),
       [{ label: 'Not now', value: null }, { label: 'Apply', value: 1, primary: true }]);
     if (c) {
       await app.importProject(new File([bytes], SHARED_FILE)); // no model inside → settings only
@@ -647,7 +728,12 @@ async function runExport(app, { format, project, shared, originalMode }) {
     app.showSponsorOverlay();
   }
 
-  const align = state.align ? { assembly: state.align.assembly, frame: state.align.frame, offset: state.align.offset } : null;
+  const align = state.align ? { ...state.align } : null;
+  // What other parts reuse: the mode and its shared parts (axis, rotation,
+  // assembly), not this part's own datums.
+  const sharedAlign = !align ? null : align.mode === 'modular'
+    ? { mode: 'modular', xy: align.xy, rotate: align.rotate, positions: align.positions }
+    : { mode: 'assembly', assembly: align.assembly };
   // ── Project (settings, selections, model, custom textures). ──
   if (project) {
     const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align } });
@@ -656,7 +742,7 @@ async function runExport(app, { format, project, shared, originalMode }) {
   }
   // ── Shared settings for the folder (no model, no selections). ──
   if (shared) {
-    const zip = await app.buildSettingsZip({ pds: { from: state.name, textures: app.textureNames(), align: align && { assembly: align.assembly } } });
+    const zip = await app.buildSettingsZip({ pds: { from: state.name, textures: app.textureNames(), align: sharedAlign } });
     await writeFile(sharedPath, new Blob([zip]));
     written.push(sharedPath);
   }
@@ -717,4 +803,4 @@ export async function initPersonal(app) {
 }
 
 // For tests (debug harness): pure helpers.
-export const _test = { locateInAssembly, stackAssembly, parseSTL, safe };
+export const _test = { locateInAssembly, stackAssembly, stackDatums, countTabs, parseSTL, safe };

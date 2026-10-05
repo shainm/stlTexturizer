@@ -6741,6 +6741,7 @@ initPersonal({
       const min = new THREE.Vector3(frame.min.x + t.x, frame.min.y + t.y, frame.min.z + t.z);
       const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
       _mapFrame = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
+      if (frame.modular) _mapFrame.modular = { ...frame.modular };
     }
     _syncPreviewMaterial();
     if (endExportPreview()) _syncPreviewExportBtn();

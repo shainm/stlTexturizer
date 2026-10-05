@@ -49,12 +49,32 @@ export function getScaleReferenceLengths(mode, settings, bounds) {
   }
 }
 
-/** Convert absolute mm tile sizes to the mode's relative scale factors. */
+/**
+ * Convert absolute mm tile sizes to the mode's relative scale factors.
+ *
+ * bounds.modular (optional, a modular stacking frame whose min.z is the part's
+ * seat): { pitch, positions }. The tile height is nudged so a whole number of
+ * repeats fits the pitch (seat → where the next part rests), so every joint of
+ * a stack meets the texture at the same phase whatever the parts' order; with
+ * positions > 1 (cylindrical only) the repeats around are a multiple of it, so
+ * a part rotated by one position still lines up. Applies when the texture is
+ * not turned sideways (V runs along z).
+ */
 export function scaleMmToRelative(mode, settings, bounds) {
   const { refU, refV } = getScaleReferenceLengths(mode, settings, bounds);
-  const u = Math.max(Number(settings.scaleU) || 1e-6, 1e-6) / refU;
-  const v = Math.max(Number(settings.scaleV) || 1e-6, 1e-6) / refV;
-  return { u, v };
+  let su = Math.max(Number(settings.scaleU) || 1e-6, 1e-6);
+  let sv = Math.max(Number(settings.scaleV) || 1e-6, 1e-6);
+  const mod = bounds && bounds.modular;
+  if (mod) {
+    const rot = ((Number(settings.rotation) || 0) * Math.PI) / 180;
+    if (mod.pitch > 0 && Math.abs(Math.cos(rot)) > 0.999) {
+      sv = mod.pitch / Math.max(1, Math.round(mod.pitch / sv));
+    }
+    if (mod.positions > 1 && mode === MODE_CYLINDRICAL) {
+      su = refU / (mod.positions * Math.max(1, Math.round(refU / (su * mod.positions))));
+    }
+  }
+  return { u: su / refU, v: sv / refV };
 }
 const CUBIC_AXIS_EPSILON = 1e-4;
 

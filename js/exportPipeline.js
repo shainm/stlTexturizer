@@ -72,7 +72,9 @@ const yieldFrame = () => new Promise(r => setTimeout(r, 0));
 // any future method use safe.
 function reviveBounds(b) {
   const v = (o) => new THREE.Vector3(o.x, o.y, o.z);
-  return { min: v(b.min), max: v(b.max), size: v(b.size), center: v(b.center) };
+  const r = { min: v(b.min), max: v(b.max), size: v(b.size), center: v(b.center) };
+  if (b.modular) r.modular = { ...b.modular }; // modular stacking frame (mapping.js)
+  return r;
 }
 
 // Flat-bottom clamp (bottomAngleLimit > 0): any vertex that ended up below the
