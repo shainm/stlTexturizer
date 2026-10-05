@@ -258,7 +258,7 @@ export function initViewer(canvas) {
   let _lastKnownPivot  = null;   // persists between drags as fallback
   let _lastPointer     = null;
 
-  // Small red sphere shown at the orbit centre during a drag
+  // Small sphere in the theme's accent shown at the orbit centre during a drag
   const _pivotMarker = new THREE.Mesh(
     new THREE.SphereGeometry(1, 16, 10),
     new THREE.MeshBasicMaterial({ color: 0xff2222, depthTest: false }),
@@ -293,6 +293,9 @@ export function initViewer(canvas) {
       ? _customPivot.distanceTo(camera.position) * Math.tan(THREE.MathUtils.degToRad(perspCamera.fov / 2)) * 0.015
       : (orthoCamera.top / orthoCamera.zoom) * 0.015;
     _pivotMarker.scale.setScalar(markerScale);
+    // Personal: the theme's accent (read per drag, so a new theme colour or
+    // Dark/Light switch shows on the next drag)
+    _pivotMarker.material.color.setHex(cssColor('--accent', 0xff2222));
     _pivotMarker.visible = true;
     _needsRender = true;
   }
