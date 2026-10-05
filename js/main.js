@@ -46,6 +46,12 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 let currentGeometry   = null;   // original loaded geometry
 let currentBounds     = null;   // bounds of the original geometry
+// Texture frame: the bounds the texture mapping is laid out in. Normally the
+// model's own; a shared frame (personal.js "Align to assembly") makes parts of
+// one assembly continue each other's texture. Bed/bottom logic always uses
+// currentBounds.
+let _mapFrame         = null;
+function _mapBounds() { return _mapFrame || currentBounds; }
 // Forward rigid transform from the file's original coordinates to the in-app
 // (centered, possibly rotated) working space: mem = poseRot·orig + poseTrans.
 // Import centering, in-app rotation, and place-on-face all fold into it; the
@@ -594,15 +600,15 @@ const _CYL_CENTER_HIT_PX = 10;
 const _CYL_RING_HIT_PX   = 8;
 
 function getEffectiveCylinderCenter() {
-  const cx = settings.cylinderCenterX ?? (currentBounds?.center.x ?? 0);
-  const cy = settings.cylinderCenterY ?? (currentBounds?.center.y ?? 0);
+  const cx = settings.cylinderCenterX ?? (_mapBounds()?.center.x ?? 0);
+  const cy = settings.cylinderCenterY ?? (_mapBounds()?.center.y ?? 0);
   return { cx, cy };
 }
 
 function getEffectiveCylinderRadius() {
   if (settings.cylinderRadius != null) return settings.cylinderRadius;
-  if (!currentBounds) return 1;
-  return Math.max(currentBounds.size.x, currentBounds.size.y) * 0.5;
+  if (!_mapBounds()) return 1;
+  return Math.max(_mapBounds().size.x, _mapBounds().size.y) * 0.5;
 }
 
 function _buildCylinderSilhouette() {
@@ -3120,6 +3126,7 @@ function handlePlaceOnFaceClick(e) {
 
   // Now reload as if this were a freshly loaded STL
   currentBounds = computeBounds(currentGeometry);
+  _mapFrame = null; // a shared texture frame belongs to the model it was made for
   // Geometry rotated — cylinder axis settings tied to old XY are stale.
   settings.cylinderCenterX = null;
   settings.cylinderCenterY = null;
@@ -3327,6 +3334,7 @@ function _rotateFinalize() {
 
   // Full refresh
   currentBounds = computeBounds(currentGeometry);
+  _mapFrame = null; // a shared texture frame belongs to the model it was made for
   loadGeometry(currentGeometry);
 
   // Geometry was reauthored (displacement baked in); cylinder silhouette
@@ -3594,6 +3602,7 @@ function loadDefaultCube() {
 
   currentGeometry = geo;
   currentBounds   = computeBounds(geo);
+  _mapFrame = null; // a shared texture frame belongs to the model it was made for
   currentPoseRot   = new THREE.Quaternion(); // authored at the origin — nothing to restore
   currentPoseTrans = new THREE.Vector3();
   currentStlName  = 'cube_50x50x50';
@@ -3764,6 +3773,7 @@ async function handleModelFile(file, stepSettings = null) {
 
     currentGeometry = geometry;
     currentBounds   = bounds;
+    _mapFrame = null; // a shared texture frame belongs to the model it was made for
     currentPoseRot   = new THREE.Quaternion();
     currentPoseTrans = originOffset ? originOffset.clone().negate() : new THREE.Vector3(); // mem = orig − centre
     currentStlName  = file.name.replace(/\.(stl|obj|3mf|step|stp)$/i, '');
@@ -4687,7 +4697,7 @@ function _regularizeOpts() {
 // come from _previewLayers).
 function _materialSettings(preview) {
   return {
-    bounds: currentBounds,
+    bounds: _mapBounds(),
     bottomAngleLimit: settings.bottomAngleLimit,
     topAngleLimit:    settings.topAngleLimit,
     noDownwardZ:      settings.noDownwardZ,
@@ -5046,6 +5056,7 @@ async function handleExport(format = 'stl') {
       layers: inputs.layers,
       settings,
       bounds: currentBounds,
+      mapBounds: _mapFrame,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
     }, _onExportPipelineEvent, isStale);
@@ -5430,6 +5441,7 @@ async function bakeTextures() {
       layers: inputs.layers,
       settings,
       bounds: currentBounds,
+      mapBounds: _mapFrame,
       regularizeOpts: _regularizeOpts(),
       mode: 'bake',
     }, _onBakePipelineEvent, () => false);
@@ -5513,6 +5525,7 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
 
   currentGeometry = geometry;
   currentBounds   = bounds;
+  _mapFrame = null; // a shared texture frame belongs to the model it was made for
   currentStlName  = `${currentStlName}_baked`;
   checkAmplitudeWarning();
 
@@ -6269,7 +6282,7 @@ importProjectInput.addEventListener('change', async (e) => {
   catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
 });
 
-async function importProject(file) {
+async function importProject(file, opts = {}) {
   if (file.size > PROJECT_MAX_IMPORT) {
     throw new Error(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB, max 500 MB)`);
   }
@@ -6302,7 +6315,7 @@ async function importProject(file) {
   // ask. The prompt runs BEFORE we touch any state, so dismissing it is a no-op.
   let loadMode = 'settings';
   if (hasModel) {
-    const choice = await promptLoadMode();
+    const choice = opts.mode || await promptLoadMode(); // opts.mode: 'all' | 'settings' skips the question
     if (choice === null) return; // dialog dismissed → load nothing
     loadMode = choice;
   }
@@ -6699,6 +6712,17 @@ initPersonal({
   handleModelFile,
   handleExport,
   buildProjectZip: (extra) => _buildProjectZip(true, true, extra),
+  // Settings only (no model, so no selections) — what other models can reuse.
+  buildSettingsZip: (extra) => _buildProjectZip(false, true, extra),
+  // The loaded model's vertices in FILE coordinates (working − t), or null
+  // when the pose is rotated.
+  modelFilePositions: () => {
+    if (!currentGeometry || Math.abs(currentPoseRot.w) < 1 - 1e-12) return null;
+    const src = currentGeometry.attributes.position.array, t = currentPoseTrans;
+    const out = new Float32Array(src.length);
+    for (let i = 0; i < src.length; i += 3) { out[i] = src[i] - t.x; out[i + 1] = src[i + 1] - t.y; out[i + 2] = src[i + 2] - t.z; }
+    return out;
+  },
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
   hasModel: () => !!currentGeometry,
@@ -6708,4 +6732,25 @@ initPersonal({
     .filter(Boolean)
     .map(e => String(e.name)),
   setPreviewColors: (textured, untextured) => { setPreviewColors(textured, untextured); _syncPreviewMaterial(); },
+  // Shared texture frame, in file coordinates of the loaded model ({min, size}
+  // as {x,y,z}) or null for the model's own bounds. Needs an unrotated pose.
+  setTextureFrame: (frame) => {
+    if (!frame) { _mapFrame = null; }
+    else {
+      const t = currentPoseTrans; // working = file + t (identity rotation)
+      const min = new THREE.Vector3(frame.min.x + t.x, frame.min.y + t.y, frame.min.z + t.z);
+      const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
+      _mapFrame = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
+    }
+    _syncPreviewMaterial();
+    if (endExportPreview()) _syncPreviewExportBtn();
+  },
+  poseRotated: () => Math.abs(currentPoseRot.w) < 1 - 1e-12,
+  modelFileBounds: () => {
+    // The loaded model's bounds in its FILE coordinates (working − t).
+    if (!currentBounds) return null;
+    const t = currentPoseTrans;
+    return { min: { x: currentBounds.min.x - t.x, y: currentBounds.min.y - t.y, z: currentBounds.min.z - t.z },
+             size: { x: currentBounds.size.x, y: currentBounds.size.y, z: currentBounds.size.z } };
+  },
 });

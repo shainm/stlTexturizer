@@ -223,6 +223,10 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
   const { settings, regularizeOpts } = input;
   const mode = input.mode === 'bake' ? 'bake' : 'export';
   const bounds = reviveBounds(input.bounds);
+  // Texture frame (optional): where the texture is laid out. The bed and the
+  // bottom clamps always use the model's own bounds.
+  const mapBounds = input.mapBounds ? reviveBounds(input.mapBounds) : bounds;
+  const dispSettings = mapBounds === bounds ? settings : { ...settings, bedZ: bounds.min.z };
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(input.positions, 3));
@@ -331,7 +335,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         };
       });
       displaced = applyDisplacementLayers(
-        subdivided, refined, settings, bounds,
+        subdivided, refined, dispSettings, mapBounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
     } else {
@@ -340,8 +344,8 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         input.imageData,
         input.imgWidth,
         input.imgHeight,
-        settings,
-        bounds,
+        dispSettings,
+        mapBounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
     }

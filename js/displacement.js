@@ -661,7 +661,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     // tilted triangles with visibly varying shading. The clamp keeps the
     // bed-contact surface a single Z value while leaving any vertex above
     // the bottom plane (side fillets, etc.) free to follow texture detail.
-    if (settings.noDownwardZ && tmpPos.z <= bounds.min.z + 1e-5) {
+    if (settings.noDownwardZ && tmpPos.z <= (settings.bedZ ?? bounds.min.z) + 1e-5) {
       newZ = tmpPos.z;
     }
 
