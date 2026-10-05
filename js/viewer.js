@@ -733,6 +733,24 @@ export function setTurntable(on, onStop = null) {
   _turntable = on ? { last: performance.now(), onStop } : null;
 }
 
+// Personal: the PDS layout floats the sidebar over the right of the canvas, so
+// the view's centre moves left by half the covered width (a view offset: the
+// projection itself shifts, so picking and the brush stay exact).
+let _viewInsetRight = 0;
+function _applyViewInset(w, h) {
+  for (const cam of [orthoCamera, perspCamera]) {
+    if (_viewInsetRight > 0 && _viewInsetRight < w) cam.setViewOffset(w, h, _viewInsetRight / 2, 0, w, h);
+    else cam.clearViewOffset();
+  }
+}
+/** Pixels of the canvas's right side covered by floating panels (0 = none). */
+export function setViewInset(rightPx) {
+  rightPx = Math.max(0, Math.round(rightPx || 0));
+  if (rightPx === _viewInsetRight || !renderer) return;
+  _viewInsetRight = rightPx;
+  onResize();
+}
+
 function onResize() {
   const el = renderer.domElement.parentElement;
   const w = el.clientWidth;
@@ -746,6 +764,7 @@ function onResize() {
   orthoCamera.updateProjectionMatrix();
   perspCamera.aspect = aspect;
   perspCamera.updateProjectionMatrix();
+  _applyViewInset(w, h);
   // LineMaterial needs the actual pixel resolution to compute linewidth correctly
   if (wireframeLines) {
     wireframeLines.material.resolution.set(
@@ -1053,9 +1072,27 @@ export function setSceneBackground(hexColor) {
   requestRender();
 }
 
+// Personal: a CSS custom property as a 0xRRGGBB number (panel-look.css sets
+// the 3D view's colours per theme and style), else the fallback. Resolved by
+// the browser through a probe element, so color-mix() and friends work too.
+function cssColor(name, fallback) {
+  if (!getComputedStyle(document.documentElement).getPropertyValue(name).trim()) return fallback;
+  const probe = document.createElement('span');
+  probe.style.cssText = `display:none;color:var(${name})`;
+  document.body.append(probe);
+  const c = getComputedStyle(probe).color;
+  probe.remove();
+  let m = c.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+  let rgb = m && [+m[1], +m[2], +m[3]];
+  if (!rgb && (m = c.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/))) rgb = [m[1] * 255, m[2] * 255, m[3] * 255];
+  if (!rgb) return fallback;
+  const [r, g, b] = rgb.map(v => Math.max(0, Math.min(255, Math.round(v))));
+  return (r << 16) | (g << 8) | b;
+}
+
 export function setViewerTheme(isLight) {
   if (!scene) return;
-  scene.background = new THREE.Color(isLight ? 0xf0f0f5 : 0x111114);
+  scene.background = new THREE.Color(cssColor('--viewport-bg', isLight ? 0xf0f0f5 : 0x111114));
   const savedZ = grid ? grid.position.z : 0;
   if (grid) {
     scene.remove(grid);
@@ -1064,8 +1101,8 @@ export function setViewerTheme(isLight) {
   }
   grid = new THREE.GridHelper(
     200, 40,
-    isLight ? 0xb0b0c8 : 0x333340,
-    isLight ? 0xd0d0e0 : 0x2a2a34
+    cssColor('--grid-center', isLight ? 0xb0b0c8 : 0x333340),
+    cssColor('--grid-line', isLight ? 0xd0d0e0 : 0x2a2a34)
   );
   grid.rotation.x = Math.PI / 2;
   grid.position.z = savedZ;

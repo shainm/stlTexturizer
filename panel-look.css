@@ -1,0 +1,809 @@
+/*
+ * Personal: the app in the look of my Windows tray panels (NX License Tray,
+ * Spotify / Weather / Claude panels, the Install Tray Icons window).
+ *
+ * Kept in its own file, loaded after style.css, so style.css stays identical
+ * to upstream and merges stay clean.
+ *
+ * The panels' look:
+ *   - warm near-black panels with a 1px border, an accent glow fading down
+ *     from the top, and the logo faded into a corner;
+ *   - they float over the desktop: here the 3D view fills the window and the
+ *     sidebar's sections, the bottom bar and the toolbar float over it as
+ *     separate panels;
+ *   - pill buttons: gray (no border) or filled with the accent, lighter on
+ *     hover; checkboxes as rounded squares, the accent with a white tick.
+ *
+ * The accent comes from one colour, --theme-color, set in the settings menu
+ * (js/pdsSettings.js; index.html applies a saved one before first paint).
+ */
+
+/* ── Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --theme-color: #4a84c4;    /* BumpMesh's steel-blue logo, as the panels take theirs */
+}
+
+/* :not([data-theme="light"]) - a bare :root would tie with style.css's
+   [data-theme="light"] block and, coming later, win over it. */
+:root:not([data-theme="light"]) {
+  color-scheme: dark;        /* the browser's own parts too: scroll bars, dropdown lists */
+  --bg:           #181817;
+  --surface:      #1e1e1c;   /* panel background */
+  --surface2:     #34332f;   /* pills and inputs (the panels' "Track") */
+  --border:       #3a3935;
+  --accent:       var(--theme-color);
+  --accent-hover: color-mix(in srgb, var(--theme-color) 72%, white);
+  --text:         #f2f1ec;
+  --text-muted:   #9c9b95;
+
+  --pl-card-hot:  #2e2d2a;
+  --pl-track-hot: #46453f;
+  --pl-dim:       #5e5d58;
+  --pl-glow:      color-mix(in srgb, var(--theme-color) 24%, transparent);   /* 62/255, as the panels draw it */
+  --pl-shadow:    0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
+
+  /* the 3D view (read by viewer.js setViewerTheme) */
+  --viewport-bg:  #181817;
+  --grid-center:  #3a3935;
+  --grid-line:    #2a2a27;
+}
+
+/* The floating panels, per style (Settings > Style; data-style on <html>).
+   Tray, the default: the tray panels' glow from the top. Matte and Glass
+   are at the end of this file. */
+:root {
+  --panel-bg:       linear-gradient(to bottom, var(--pl-glow), transparent 120px), var(--surface);
+  --panel-bg-plain: var(--surface);
+  --panel-border:   var(--border);
+  --panel-radius:   10px;
+  --panel-shadow:   var(--pl-shadow);
+  --panel-blur:     none;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --accent:       color-mix(in srgb, var(--theme-color) 82%, black);
+  --accent-hover: var(--theme-color);
+  --pl-card-hot:  #f2f2f7;
+  --pl-track-hot: #dcdce6;
+  --pl-dim:       #b0b0c0;
+  --pl-glow:      color-mix(in srgb, var(--theme-color) 12%, transparent);
+  --pl-shadow:    0 8px 24px rgba(30, 30, 60, 0.16), 0 1px 3px rgba(30, 30, 60, 0.12);
+  --viewport-bg:  #f0f0f5;
+  --grid-center:  #b0b0c8;
+  --grid-line:    #d0d0e0;
+}
+
+/* Every floating panel takes the style's edge and blur. */
+.panel-section,
+.gallery-panel,
+#viewport-footer,
+.vp-btn,
+.sidebar-toggle,
+.pds-settings,
+.pds-toast,
+.export-dialog,
+.welcome-modal,
+.sponsor-modal,
+.license-modal {
+  border-color: var(--panel-border);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
+}
+
+/* ── Floating layout ────────────────────────────────────────────────── */
+/* --view-right: how much of the window's right side the card column takes
+   (its width plus the outer gap); the toolbar, bottom bar and viewport
+   overlays keep clear of it. pdsSettings.js tells the camera the same. */
+main {
+  --gap: 12px;
+  --view-right: calc(var(--sidebar-w) + var(--gap));
+}
+main.sidebar-collapsed { --view-right: 0px; }
+
+#viewport-section {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* The sidebar: a transparent column the cards float in. Clicks between the
+   cards go through to the 3D view; the wheel over a card scrolls the column. */
+#settings-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: calc(var(--sidebar-w) + 2 * var(--gap));
+  padding: var(--gap);
+  background: none;
+  border: 0;
+  pointer-events: none;
+  scrollbar-width: none;
+}
+#settings-panel::-webkit-scrollbar { display: none; }
+#settings-panel > * { pointer-events: auto; }
+
+/* Each section is its own panel. */
+.panel-section {
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+}
+.panel-section:last-child { margin-bottom: 0; }
+
+/* The gallery replaces the cards as one tall panel. */
+.gallery-panel {
+  position: absolute;
+  top: var(--gap);
+  right: var(--gap);
+  bottom: var(--gap);
+  z-index: 4;
+  width: var(--sidebar-w);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+}
+
+/* The collapse tab: a small floating pill beside the cards. */
+.sidebar-toggle {
+  right: calc(var(--view-right) + 4px);
+  width: 18px;
+  height: 46px;
+  margin-top: -23px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-bg-plain);
+  box-shadow: var(--panel-shadow);
+}
+main.sidebar-collapsed .sidebar-toggle { right: 6px; }
+
+/* The bottom bar: a floating panel in the bottom left. */
+#viewport-footer {
+  position: absolute;
+  left: var(--gap);
+  bottom: var(--gap);
+  max-width: calc(100% - var(--view-right) - 2 * var(--gap));
+  z-index: 3;
+  min-height: 34px;
+  padding: 6px 14px;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+}
+.viewport-controls-hint { margin-left: 8px; }
+
+/* Undo / Redo / Reset / settings: round floating buttons, top right of the view. */
+.viewport-toolbar {
+  position: absolute;
+  top: var(--gap);
+  right: calc(var(--view-right) + var(--gap));
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vp-gap { width: 6px; }
+.vp-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--panel-shadow);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.vp-btn:hover:not(:disabled) { background: var(--pl-track-hot); }
+.vp-btn:disabled { color: var(--text-muted); opacity: 0.55; cursor: not-allowed; }
+.vp-btn.active { background: var(--accent); border-color: transparent; color: #fff; }
+.vp-btn:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+
+/* Viewport overlays keep to the visible part of the view. */
+.drop-hint { right: var(--view-right); }
+.gpu-warning { left: calc((100% - var(--view-right)) / 2); }
+.mesh-diagnostics { bottom: calc(var(--gap) + 52px); left: var(--gap); }
+.mesh-diagnostics.diag-corner-tr { top: calc(var(--gap) + 48px); right: calc(var(--view-right) + var(--gap)); }
+
+/* No support banners or popups outside the settings menu. */
+#store-cta-wrapper,
+#sponsor-overlay { display: none !important; }
+
+/* Portrait phones keep the stacked layout: the view on top, the cards below. */
+@media (max-width: 699px) and (orientation: portrait) {
+  main { --view-right: 0px; }
+  #viewport-section { position: relative; flex: 1 1 0; inset: auto; }
+  #settings-panel,
+  .gallery-panel {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: 52%;
+    pointer-events: auto;
+  }
+  .gallery-panel { margin: var(--gap); }
+  .sidebar-toggle { border-radius: 0; box-shadow: none; margin: 0; height: 28px; width: auto; }
+}
+
+/* ── Settings menu (the gear) ───────────────────────────────────────── */
+.pds-settings {
+  position: absolute;
+  top: calc(var(--gap) + 46px);
+  right: calc(var(--view-right) + var(--gap));
+  z-index: 30;
+  width: min(360px, calc(100vw - 2 * var(--gap)));
+  max-height: calc(100% - 46px - 3 * var(--gap));
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+  scrollbar-width: thin;
+}
+.pds-settings.hidden { display: none; }
+/* the logo faded into the corner, as on the panels */
+.pds-settings::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 84px;
+  height: 92px;
+  background: url("logo.png") center / contain no-repeat;
+  opacity: 0.09;
+  pointer-events: none;
+}
+
+.pds-settings-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.pds-settings-head .app-version { opacity: 0.55; font-size: 11px; font-weight: 400; }
+.pds-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pds-close:hover { background: var(--surface2); color: var(--text); }
+
+.pds-group { padding: 12px 0 2px; border-top: 1px solid var(--border); margin-top: 10px; }
+.pds-group:first-of-type { border-top: 0; margin-top: 0; }
+.pds-group h3 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.pds-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.pds-label { flex: 0 0 78px; font-size: 12px; color: var(--text-muted); }
+.pds-row > .excl-seg { flex: 1; }
+.pds-hint { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); margin: -2px 0 10px; }
+
+.pds-swatches { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.pds-swatch {
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--sw);
+  box-shadow: 0 0 0 1px var(--border) inset;
+  cursor: pointer;
+}
+.pds-swatch.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface) inset; }
+input.pds-swatch-custom {
+  -webkit-appearance: none;
+  appearance: none;
+  background: conic-gradient(#f44, #fd4, #4d6, #4cf, #66f, #e4e, #f44);
+  overflow: hidden;
+}
+input.pds-swatch-custom::-webkit-color-swatch-wrapper { padding: 0; }
+input.pds-swatch-custom::-webkit-color-swatch { border: 0; border-radius: 50%; opacity: 0; }
+input.pds-swatch-custom.active::-webkit-color-swatch { opacity: 1; }
+input.pds-swatch-custom::-moz-color-swatch { border: 0; border-radius: 50%; }
+
+.pds-settings .lang-seg { flex: 1; }
+.pds-settings .lang-dropdown { width: 100%; height: 30px; }
+.pds-settings select,
+.pds-settings input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  background-color: var(--surface2);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.pds-settings select:focus,
+.pds-settings input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.pds-settings input[hidden] { display: none; }
+.pds-save-row select { flex: 0 1 46%; }
+.pds-save-row .export-go-btn { margin: 0; height: 30px; padding: 0 16px; }
+
+.pds-profile-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.pds-empty { font-size: 12px; color: var(--text-muted); font-style: italic; }
+.pds-profile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 7px 12px;
+  background: var(--pl-card-hot);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.pds-profile-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pds-profile-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pds-profile-when { font-size: 11px; color: var(--text-muted); }
+.pds-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+.pds-pill {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pds-pill:hover { background: var(--pl-track-hot); }
+.pds-pill-icon { width: 26px; padding: 0; font-size: 15px; color: var(--text-muted); }
+.pds-pill-icon:hover { color: var(--text); background: color-mix(in srgb, var(--danger) 30%, var(--surface2)); }
+
+.pds-links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pds-link,
+.pds-support .license-link {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+  opacity: 1;
+}
+.pds-link:hover,
+.pds-support .license-link:hover { background: var(--pl-track-hot); color: var(--text); }
+
+.pds-toast {
+  position: fixed;
+  left: 50%;
+  top: 18px;
+  z-index: 10002;
+  transform: translate(-50%, -8px);
+  padding: 8px 16px;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--panel-shadow);
+  font-size: 12.5px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.pds-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ── Section headings ───────────────────────────────────────────────── */
+/* Like the panels' ("NX seats ..."): sentence case, semibold, full text colour. */
+.panel-section h2,
+.gallery-header h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.panel-subsection-heading {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+/* Save / Load project, in the first card. */
+.panel-section .project-io { margin-top: 8px; gap: 6px; }
+.panel-section .project-io .icon-btn.text-btn { flex: 1; height: 28px; font-weight: 400; }
+.panel-section .project-io .export-dialog { top: calc(100% + 6px); right: 0; left: 0; }
+
+/* ── Pill buttons ───────────────────────────────────────────────────── */
+/* Gray pills: no border, lighter gray on hover (the panels never outline a
+   hovered button in the accent). */
+.upload-btn,
+.smart-res-btn,
+.excl-tool-btn,
+.excl-clear-btn,
+.step-cancel-btn,
+.place-on-face-btn,
+.rotate-reset-btn,
+.mesh-diag-run-btn,
+.diag-show-btn,
+.precision-refresh-btn,
+.gallery-done-btn,
+.gallery-turntable-btn,
+.gallery-chip,
+.sponsor-close-btn,
+.license-close-btn,
+.project-io .icon-btn {
+  border-radius: 999px;
+  border-color: transparent;
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.upload-btn:hover,
+.smart-res-btn:hover:not(:disabled),
+.excl-tool-btn:hover,
+.step-cancel-btn:hover,
+.place-on-face-btn:hover,
+.rotate-reset-btn:hover,
+.mesh-diag-run-btn:hover,
+.diag-show-btn:hover,
+.precision-refresh-btn:hover,
+.gallery-done-btn:hover,
+.gallery-turntable-btn:hover,
+.gallery-chip:hover,
+.sponsor-close-btn:hover,
+.license-close-btn:hover,
+.project-io .icon-btn:hover:not(:disabled) {
+  background: var(--pl-track-hot);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.excl-clear-btn:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger) 22%, var(--surface2));
+  color: var(--text);
+}
+
+/* Chosen pills fill with the accent, like the installer's Stable/Nightly. */
+.excl-tool-btn.active,
+.place-on-face-btn.active,
+.gallery-chip[aria-pressed="true"],
+.gallery-turntable-btn[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* Segmented controls: one pill track with the chosen part filled. */
+.excl-seg {
+  background: var(--surface2);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+.excl-seg-btn,
+.excl-seg-btn:first-child,
+.excl-seg-btn:last-child {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.excl-seg-btn:hover:not(.active) { background: var(--pl-track-hot); color: var(--text); }
+.excl-seg-btn.active {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+}
+#excl-mode-include.active {
+  background: #1db954;   /* the panels' green ("free") */
+  border: none;
+  color: #fff;
+}
+
+.lang-seg { border-radius: 999px; border-color: transparent; }
+.lang-dropdown { background-color: var(--surface2); color: var(--text); }
+.lang-dropdown:hover { background-color: var(--pl-track-hot); color: var(--text); }
+
+/* Primary pills: the accent, lighter on hover. */
+.export-btn,
+.export-go-btn {
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+}
+.export-btn:hover:not(:disabled),
+.export-go-btn:hover {
+  background: var(--accent-hover);
+  filter: none;
+}
+
+.layer-add-btn { border-radius: 999px; }
+.layer-btn.layer-blend { border-radius: 999px; }
+
+/* ── Inputs ─────────────────────────────────────────────────────────── */
+:root:not([data-theme="light"]) .form-row select,
+:root:not([data-theme="light"]) input[type="number"].val,
+:root:not([data-theme="light"]) .gallery-search,
+:root:not([data-theme="light"]) .step-field-row input[type="number"],
+:root:not([data-theme="light"]) .rotate-input-group input {
+  background-color: var(--surface2);
+  border-color: transparent;
+  color: var(--text);
+  border-radius: 6px;
+}
+:root:not([data-theme="light"]) .form-row select:focus,
+:root:not([data-theme="light"]) input[type="number"].val:focus,
+:root:not([data-theme="light"]) .gallery-search:focus {
+  border-color: var(--accent);
+}
+
+/* Sliders: a thicker rounded track, accent thumb ringed in the panel colour. */
+.slider-row input[type="range"] {
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 2px;
+}
+.slider-row input[type="range"]::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--surface); }
+.slider-row input[type="range"]::-webkit-slider-thumb:hover { background: var(--accent-hover); }
+
+/* Checkboxes: the installer's rounded square - an outline when off, the
+   accent with a white tick when on. */
+:root:not([data-theme="light"]) input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0 2px 0 0;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 4px;
+  background: transparent center / 11px 11px no-repeat;
+  cursor: pointer;
+  vertical-align: -3px;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+:root:not([data-theme="light"]) input[type="checkbox"]:hover { border-color: var(--text); }
+:root:not([data-theme="light"]) input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.6 6.3l2.3 2.3 4.5-4.9' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root:not([data-theme="light"]) input[type="checkbox"]:disabled { border-color: var(--pl-dim); cursor: not-allowed; }
+:root:not([data-theme="light"]) input[type="checkbox"]:checked:disabled { background-color: var(--pl-dim); }
+:root:not([data-theme="light"]) input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+
+input[type="radio"],
+input[type="checkbox"] { accent-color: var(--accent); }
+
+/* ── Swatches, layers ───────────────────────────────────────────────── */
+.preset-swatch { border-radius: 8px; }
+.layer-row { background: var(--pl-card-hot); border-color: var(--border); }
+.layer-row.active {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);   /* the installer's checked card */
+  background: color-mix(in srgb, var(--accent) 12%, var(--pl-card-hot));
+}
+
+.drop-zone.drag-over::after { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+/* ── Dialogs: the panels' question look ─────────────────────────────── */
+.welcome-modal,
+.sponsor-modal,
+.license-modal,
+.export-dialog {
+  background: var(--panel-bg);
+  border-color: var(--border);
+  box-shadow: var(--panel-shadow);
+}
+.welcome-modal { background-attachment: local; }
+.welcome-modal,
+.sponsor-modal,
+.license-modal { border-radius: var(--panel-radius); }
+.welcome-heading { letter-spacing: 0.02em; }
+
+/* thin dark scroll bars, like the panels' (which have none) */
+:root:not([data-theme="light"]) * { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+:root:not([data-theme="light"]) #settings-panel { scrollbar-width: none; }
+
+/* ── Style: Matte (Android's Material You) ──────────────────────────── */
+/* Flat tonal surfaces tinted by the theme colour, no glow, no edges, big
+   rounded corners; chosen controls fill with a soft tonal container rather
+   than the full colour. */
+:root[data-style="matte"]:not([data-theme="light"]) {
+  --bg:           color-mix(in srgb, var(--theme-color) 4%, #111113);
+  --surface:      color-mix(in srgb, var(--theme-color) 9%, #1a1a1d);
+  --surface2:     color-mix(in srgb, var(--theme-color) 16%, #2a2a2f);
+  --border:       color-mix(in srgb, var(--theme-color) 14%, #34343a);
+  --text:         #ecebf0;
+  --text-muted:   #aeacb6;
+  --pl-card-hot:  color-mix(in srgb, var(--theme-color) 13%, #232328);
+  --pl-track-hot: color-mix(in srgb, var(--theme-color) 26%, #33333a);
+  --pl-tonal:     color-mix(in srgb, var(--theme-color) 42%, #2a2a2f);
+  --viewport-bg:  color-mix(in srgb, var(--theme-color) 4%, #111113);
+  --grid-center:  color-mix(in srgb, var(--theme-color) 18%, #303036);
+  --grid-line:    color-mix(in srgb, var(--theme-color) 8%, #222226);
+  --panel-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+:root[data-style="matte"][data-theme="light"] {
+  --bg:           color-mix(in srgb, var(--theme-color) 5%, #f7f6fa);
+  --surface:      color-mix(in srgb, var(--theme-color) 7%, #fdfcff);
+  --surface2:     color-mix(in srgb, var(--theme-color) 14%, #ebeaf0);
+  --border:       color-mix(in srgb, var(--theme-color) 14%, #dddce4);
+  --pl-card-hot:  color-mix(in srgb, var(--theme-color) 10%, #f3f2f7);
+  --pl-track-hot: color-mix(in srgb, var(--theme-color) 24%, #e0dfe7);
+  --pl-tonal:     color-mix(in srgb, var(--theme-color) 30%, #ebeaf0);
+  --viewport-bg:  color-mix(in srgb, var(--theme-color) 6%, #f2f1f6);
+  --grid-center:  color-mix(in srgb, var(--theme-color) 25%, #b8b7c4);
+  --grid-line:    color-mix(in srgb, var(--theme-color) 12%, #d8d7e0);
+  --panel-shadow: 0 1px 3px rgba(30, 30, 60, 0.12);
+}
+:root[data-style="matte"] {
+  --panel-bg:       var(--surface);
+  --panel-bg-plain: var(--surface);
+  --panel-border:   transparent;
+  --panel-radius:   22px;
+}
+[data-style="matte"] .panel-section { padding: 14px 16px; margin-bottom: 8px; }
+[data-style="matte"] .pds-settings { padding: 16px 18px 18px; }
+[data-style="matte"] .layer-row,
+[data-style="matte"] .pds-profile { border-color: transparent; border-radius: 14px; }
+[data-style="matte"] .preset-swatch { border-radius: 12px; }
+[data-style="matte"] .pds-settings::after { display: none; }
+/* chosen = tonal container + full-strength text (Material's secondary container) */
+[data-style="matte"] .excl-seg-btn.active,
+[data-style="matte"] .excl-tool-btn.active,
+[data-style="matte"] .place-on-face-btn.active,
+[data-style="matte"] .gallery-chip[aria-pressed="true"],
+[data-style="matte"] .gallery-turntable-btn[aria-pressed="true"],
+[data-style="matte"] .vp-btn.active {
+  background: var(--pl-tonal);
+  color: var(--text);
+}
+[data-style="matte"] .layer-row.active {
+  border-color: transparent;
+  background: var(--pl-tonal);
+}
+[data-style="matte"] .form-row select,
+[data-style="matte"] input[type="number"].val,
+[data-style="matte"] .pds-settings select,
+[data-style="matte"] .pds-settings input[type="text"] { border-radius: 10px; }
+
+/* ── Style: Glass (Apple's frosted materials) ───────────────────────── */
+/* Translucent panels that blur and saturate the 3D view behind them, a thin
+   light edge with a highlight along the top, controls as tinted glass. */
+:root[data-style="glass"]:not([data-theme="light"]) {
+  --surface:        #1f1f23;   /* the few opaque things style.css draws */
+  --surface2:       rgba(255, 255, 255, 0.09);
+  --border:         rgba(255, 255, 255, 0.12);
+  --pl-card-hot:    rgba(255, 255, 255, 0.06);
+  --pl-track-hot:   rgba(255, 255, 255, 0.17);
+  --panel-bg:       linear-gradient(to bottom, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 60px), rgba(30, 30, 34, 0.5);
+  --panel-bg-plain: rgba(30, 30, 34, 0.55);
+  --panel-border:   rgba(255, 255, 255, 0.14);
+  --panel-shadow:   0 10px 36px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --option-bg:      #26262a;
+}
+:root[data-style="glass"][data-theme="light"] {
+  --surface:        #f7f7fa;
+  --surface2:       rgba(0, 0, 0, 0.06);
+  --border:         rgba(0, 0, 0, 0.08);
+  --pl-card-hot:    rgba(255, 255, 255, 0.5);
+  --pl-track-hot:   rgba(0, 0, 0, 0.11);
+  --panel-bg:       linear-gradient(to bottom, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60px), rgba(255, 255, 255, 0.55);
+  --panel-bg-plain: rgba(255, 255, 255, 0.62);
+  --panel-border:   rgba(255, 255, 255, 0.75);
+  --panel-shadow:   0 10px 36px rgba(40, 40, 80, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --option-bg:      #ffffff;
+}
+:root[data-style="glass"] {
+  --panel-radius:   16px;
+  --panel-blur:     blur(28px) saturate(180%);
+}
+/* a dropdown's list can't be glass: give its options a solid colour */
+[data-style="glass"] option { background-color: var(--option-bg); color: var(--text); }
+[data-style="glass"] .layer-row,
+[data-style="glass"] .pds-profile { border-radius: 12px; }
+[data-style="glass"] .pds-settings::after { display: none; }
+[data-style="glass"] .excl-seg-btn.active,
+[data-style="glass"] .vp-btn.active { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+
+
+/* ── Folding cards (pdsSettings.js initFolding) ─────────────────────── */
+/* A click on a card's title folds it to just the title. The body animates
+   its height through grid rows (1fr <-> 0fr). */
+.pds-foldable > h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: margin-bottom 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pds-foldable > h2:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 3px; border-radius: 4px; }
+.pds-fold-chevron {
+  margin-left: auto;
+  width: 8px;
+  height: 8px;
+  border-right: 1.6px solid var(--text-muted);
+  border-bottom: 1.6px solid var(--text-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.15s;
+}
+.pds-foldable > h2:hover .pds-fold-chevron { border-color: var(--text); }
+.pds-folded > h2 { margin-bottom: 0; }
+.pds-folded .pds-fold-chevron { transform: translateX(-2px) rotate(-45deg); }
+.pds-fold-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s;
+}
+.pds-folded .pds-fold-body { grid-template-rows: 0fr; opacity: 0; }
+.pds-fold-inner { min-height: 0; }
+.pds-fold-inner.pds-clip { overflow: hidden; }
+
+/* ── Docking arrow: the cards slide out to the right and back ───────── */
+/* style.css hides the panels with display:none; here they stay laid out and
+   slide off instead, and what sits beside them glides with them. */
+main.sidebar-collapsed #settings-panel { display: block; }
+main.sidebar-collapsed .gallery-panel:not(.hidden) { display: flex; }
+#settings-panel,
+.gallery-panel {
+  transition: transform 0.36s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.26s ease, visibility 0s linear 0s;
+}
+main.sidebar-collapsed #settings-panel,
+main.sidebar-collapsed .gallery-panel {
+  transform: translateX(calc(100% + var(--gap)));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.36s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.26s ease 0.08s, visibility 0s linear 0.36s;
+}
+.viewport-toolbar,
+.sidebar-toggle,
+.pds-settings,
+#viewport-footer,
+.mesh-diagnostics.diag-corner-tr {
+  transition: right 0.36s cubic-bezier(0.2, 0.8, 0.2, 1), max-width 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sidebar-toggle svg { transition: transform 0.36s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  #settings-panel, .gallery-panel, .viewport-toolbar, .sidebar-toggle, .pds-settings,
+  #viewport-footer, .pds-fold-body, .pds-fold-chevron, .pds-foldable > h2 { transition: none !important; }
+}
+/* Portrait phones: the stacked panel just hides, as before. */
+@media (max-width: 699px) and (orientation: portrait) {
+  main.sidebar-collapsed #settings-panel,
+  main.sidebar-collapsed .gallery-panel:not(.hidden) { display: none; }
+}

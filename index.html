@@ -29,6 +29,7 @@
   <meta name="twitter:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
   <link rel="icon" type="image/png" href="logo.png" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="panel-look.css" />
   <script>
     // Apply saved theme before first paint to avoid flash
     (function() {
@@ -37,6 +38,13 @@
       const prefersDark = t ? t === 'dark'
                             : window.matchMedia('(prefers-color-scheme: dark)').matches;
       if (!prefersDark) document.documentElement.setAttribute('data-theme', 'light');
+      // PDS: the theme colour picked in the settings menu (js/pdsSettings.js)
+      try {
+        const c = localStorage.getItem('bm-pds-accent');
+        if (/^#[0-9a-f]{6}$/i.test(c || '')) document.documentElement.style.setProperty('--theme-color', c);
+        const s = localStorage.getItem('bm-pds-style');
+        if (s === 'matte' || s === 'glass') document.documentElement.setAttribute('data-style', s);
+      } catch (e) { /* private mode */ }
     })();
   </script>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -52,60 +60,100 @@
   <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js">
 </head>
 <body>
-  <header>
-    <div class="logo">
-      <img src="logo.png" alt="BumpMesh" width="24" height="24" />
-      <span>BumpMesh <span id="app-version" class="app-version"></span></span>
-    </div>
-    <div class="header-actions">
-      <div class="project-io">
-        <button id="undo-btn" class="icon-btn" data-i18n-title="header.undo" title="Undo (Ctrl+Z)" disabled>
+  <!-- PDS edition: no header bar. Undo / Redo / Reset and the settings gear float in the
+       viewport's top right; Save / Load project sit in the first sidebar card; theme, language,
+       profiles and the support links are in the settings menu (js/pdsSettings.js). -->
+  <main>
+    <div id="viewport-toolbar" class="viewport-toolbar">
+        <button id="undo-btn" class="vp-btn" data-i18n-title="header.undo" title="Undo (Ctrl+Z)" disabled>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
         </button>
-        <button id="redo-btn" class="icon-btn" data-i18n-title="header.redo" title="Redo (Ctrl+Shift+Z)" disabled>
+        <button id="redo-btn" class="vp-btn" data-i18n-title="header.redo" title="Redo (Ctrl+Shift+Z)" disabled>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></svg>
         </button>
-        <span class="project-io-gap" aria-hidden="true"></span>
-        <button id="reset-settings-btn" class="icon-btn" data-i18n-title="header.resetSettings" title="Reset settings to defaults">
+        <button id="reset-settings-btn" class="vp-btn" data-i18n-title="header.resetSettings" title="Reset settings to defaults">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
         </button>
-        <span class="project-io-gap" aria-hidden="true"></span>
-        <button id="export-project-btn" class="icon-btn text-btn" data-i18n-title="header.exportProject" title="Save project (.bumpmesh)">
-          <span data-i18n="header.save">Save</span>
+        <span class="vp-gap" aria-hidden="true"></span>
+        <button id="pds-settings-btn" class="vp-btn" title="Settings" aria-label="Settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="pds-settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
         </button>
-        <input type="file" id="import-project-input" accept=".bumpmesh" hidden />
-        <label for="import-project-input" class="icon-btn text-btn" data-i18n-title="header.importProject" title="Load project (.bumpmesh)" role="button" tabindex="0">
-          <span data-i18n="header.load">Load</span>
-        </label>
-        <div id="load-dialog" class="export-dialog hidden">
-          <p class="export-dialog-title" data-i18n="header.loadDialogTitle">This project includes a model. Load:</p>
-          <label><input type="radio" name="load-mode" id="load-mode-all" value="all" /> <span data-i18n="header.loadModelLabel">Model + settings</span></label>
-          <label><input type="radio" name="load-mode" id="load-mode-settings" value="settings" /> <span data-i18n="header.loadSettingsLabel">Settings only</span></label>
-          <button id="load-go-btn" class="export-go-btn" data-i18n="header.loadGo">Load</button>
-        </div>
-        <div id="export-dialog" class="export-dialog hidden">
-          <label><input type="checkbox" id="export-settings-chk" checked disabled /> <span data-i18n="header.exportSettingsLabel">Settings</span></label>
-          <label><input type="checkbox" id="export-model-chk" checked /> <span data-i18n="header.exportModelLabel">Model (STL)</span></label>
-          <label id="export-texture-row" class="hidden"><input type="checkbox" id="export-texture-chk" checked /> <span data-i18n="header.exportTextureLabel">Custom texture</span></label>
-          <button id="export-go-btn" class="export-go-btn" data-i18n="header.exportGo">Save</button>
-        </div>
+    </div>
+
+    <!-- Settings menu (the gear). Filled and wired by js/pdsSettings.js. -->
+    <div id="pds-settings" class="pds-settings hidden" role="dialog" aria-labelledby="pds-settings-title">
+      <div class="pds-settings-head">
+        <img src="logo.png" alt="" width="22" height="22" />
+        <span id="pds-settings-title">BumpMesh <span id="app-version" class="app-version"></span></span>
+        <button id="pds-settings-close" class="pds-close" type="button" aria-label="Close">&#215;</button>
       </div>
-      <div class="lang-seg">
-      </div>
-      <button id="theme-toggle" class="theme-toggle"
+
+      <section class="pds-group">
+        <h3>Appearance</h3>
+        <div class="pds-row">
+          <span class="pds-label">Style</span>
+          <div id="pds-style-seg" class="excl-seg" role="group" aria-label="Panel style">
+            <button type="button" class="excl-seg-btn" data-style="tray" title="The tray panels: dark panels with a glow of the theme colour from the top">Tray</button>
+            <button type="button" class="excl-seg-btn" data-style="matte" title="Flat, tinted surfaces with round corners, like Android's Material You">Matte</button>
+            <button type="button" class="excl-seg-btn" data-style="glass" title="Frosted, see-through panels over the 3D view, like Apple's">Glass</button>
+          </div>
+        </div>
+        <div class="pds-row">
+          <span class="pds-label">Theme colour</span>
+          <div id="pds-accent-swatches" class="pds-swatches" role="radiogroup" aria-label="Theme colour"></div>
+        </div>
+        <div class="pds-row">
+          <span class="pds-label">Mode</span>
+          <div id="pds-mode-seg" class="excl-seg" role="group" aria-label="Dark or light">
+            <button type="button" class="excl-seg-btn" data-mode="dark">Dark</button>
+            <button type="button" class="excl-seg-btn" data-mode="light">Light</button>
+          </div>
+        </div>
+        <div class="pds-row">
+          <span class="pds-label">Language</span>
+          <div class="lang-seg"></div>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" style="display:none" tabindex="-1"
         data-i18n-title="theme.toggleTitle"
         data-i18n-aria-label="theme.toggleAriaLabel"
         title="Toggle light / dark mode" aria-label="Toggle light/dark mode">
         <span class="icon-moon" data-i18n="theme.dark">Dark Theme</span>
         <span class="icon-sun" data-i18n="theme.light">Light Theme</span>
       </button>
-      <a href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub Repository" aria-label="GitHub Repository">
-        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-      </a>
-    </div>
-  </header>
+      </section>
 
-  <main>
+      <section class="pds-group">
+        <h3>Profiles</h3>
+        <p class="pds-hint">A profile keeps every setting in the sidebar: layers, textures, projection, masking angles and export. Loading one keeps your model and its painted surfaces.</p>
+        <div id="pds-profile-list" class="pds-profile-list"></div>
+        <div class="pds-row pds-save-row">
+          <select id="pds-profile-target" aria-label="Save to"></select>
+          <input type="text" id="pds-profile-name" placeholder="Profile name" maxlength="60" spellcheck="false" />
+          <button type="button" id="pds-profile-save" class="export-go-btn">Save</button>
+        </div>
+        <div class="pds-row">
+          <span class="pds-label">Start with</span>
+          <select id="pds-default-profile" aria-label="Default settings"></select>
+        </div>
+        <p class="pds-hint">The default settings: a new session starts with them, and Reset goes back to them.</p>
+      </section>
+
+      <section class="pds-group pds-support">
+        <h3>Support &amp; about</h3>
+        <p class="pds-hint">BumpMesh is made free by CNC Kitchen. Support them:</p>
+        <div class="pds-links">
+          <a class="pds-link" href="https://geni.us/CNCStoreTexture" target="_blank" rel="noopener noreferrer">CNCKitchen.STORE</a>
+          <a class="pds-link" href="https://www.paypal.me/CNCKitchen" target="_blank" rel="noopener noreferrer">PayPal</a>
+          <a class="pds-link" href="https://ko-fi.com/cnckitchen" target="_blank" rel="noopener noreferrer">Ko-fi</a>
+          <a class="pds-link" href="https://github.com/CNCKitchen/stlTexturizer" target="_blank" rel="noopener noreferrer" title="GitHub Repository" aria-label="GitHub Repository"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> GitHub</a>
+        </div>
+        <div class="pds-links">
+          <button id="welcome-link" class="license-link">What&rsquo;s New</button>
+          <button id="license-link" class="license-link" data-i18n="license.btn">License &amp; Terms</button>
+          <button id="imprint-link" class="license-link" data-i18n="imprint.btn">Imprint &amp; Privacy</button>
+        </div>
+      </section>
+    </div>
     <!-- â”€â”€â”€ 3-D Viewport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
     <section id="viewport-section">
       <div id="drop-zone" class="drop-zone">
@@ -209,6 +257,27 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 0 1 14.5-4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 12a8 8 0 0 1-14.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 3v4.5H14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 21v-4.5H10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span data-i18n="ui.rotate">Rotate</span>
           </button>
+        </div>
+        <div class="project-io">
+          <label for="import-project-input" class="icon-btn text-btn" data-i18n-title="header.importProject" title="Load project (.bumpmesh)" role="button" tabindex="0">
+          <span data-i18n="header.load">Load</span>
+        </label>
+          <input type="file" id="import-project-input" accept=".bumpmesh" hidden />
+          <button id="export-project-btn" class="icon-btn text-btn" data-i18n-title="header.exportProject" title="Save project (.bumpmesh)">
+          <span data-i18n="header.save">Save</span>
+        </button>
+          <div id="load-dialog" class="export-dialog hidden">
+          <p class="export-dialog-title" data-i18n="header.loadDialogTitle">This project includes a model. Load:</p>
+          <label><input type="radio" name="load-mode" id="load-mode-all" value="all" /> <span data-i18n="header.loadModelLabel">Model + settings</span></label>
+          <label><input type="radio" name="load-mode" id="load-mode-settings" value="settings" /> <span data-i18n="header.loadSettingsLabel">Settings only</span></label>
+          <button id="load-go-btn" class="export-go-btn" data-i18n="header.loadGo">Load</button>
+        </div>
+          <div id="export-dialog" class="export-dialog hidden">
+          <label><input type="checkbox" id="export-settings-chk" checked disabled /> <span data-i18n="header.exportSettingsLabel">Settings</span></label>
+          <label><input type="checkbox" id="export-model-chk" checked /> <span data-i18n="header.exportModelLabel">Model (STL)</span></label>
+          <label id="export-texture-row" class="hidden"><input type="checkbox" id="export-texture-chk" checked /> <span data-i18n="header.exportTextureLabel">Custom texture</span></label>
+          <button id="export-go-btn" class="export-go-btn" data-i18n="header.exportGo">Save</button>
+        </div>
         </div>
         <div id="import-progress" class="export-progress hidden" style="margin-top:10px;margin-bottom:0;">
           <div class="export-progress-track">
@@ -702,10 +771,6 @@
           <button id="export-3mf-btn" class="export-btn" disabled data-i18n="ui.export3mf" data-i18n-title="tooltips.export3mf" title="Smaller file size â€” may not be accepted by all slicers">Export 3MF</button>
         </div>
       </section>
-
-      <button id="welcome-link" class="license-link">What&rsquo;s New</button>
-      <button id="license-link" class="license-link" data-i18n="license.btn">License &amp; Terms</button>
-      <button id="imprint-link" class="license-link" data-i18n="imprint.btn">Imprint &amp; Privacy</button>
 
     </aside>
 

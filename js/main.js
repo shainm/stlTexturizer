@@ -6753,6 +6753,7 @@ _updateUndoButtons();
 initPersonal({
   t,
   importProject,
+  resetSettingsToDefaults,
   handleModelFile,
   handleExport,
   buildProjectZip: (extra) => _buildProjectZip(true, true, extra),

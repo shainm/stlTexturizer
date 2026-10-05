@@ -10,6 +10,9 @@
  *
  *  - Version label marks this edition.
  *  - Preview colours for textured / untextured surfaces (remembered).
+ *  - The settings menu (gear, js/pdsSettings.js): theme colour, dark/light,
+ *    language, settings profiles + the default one, and the support links,
+ *    which appear nowhere else (no support popups or banners).
  *  - 3D Print Settings (in index.html / main.js, since it is a saved
  *    setting): tops/bottoms get printZScale x the texture height of walls
  *    (displacement.js printZFactor, mirrored in the preview shader).
@@ -38,6 +41,7 @@ import { APP_VERSION } from './version.js';
 import { setDownloadSink } from './exporter.js';
 import { THREE } from './threeCompat.js';
 import { getCamera, getRenderer, getCurrentMesh, setDiagEdges } from './viewer.js';
+import { initSettingsMenu } from './pdsSettings.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -1009,6 +1013,7 @@ export async function initPersonal(app) {
   if (v) v.textContent = `v${APP_VERSION} · ${EDITION}`;
   injectStyle();
   initColours(app);
+  initSettingsMenu(app);
   if (!(await connect())) return; // plain web page: no local file features
   interceptPickers(app);
   watchDrops(app);
