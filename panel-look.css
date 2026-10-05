@@ -259,9 +259,9 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   position: absolute;
   right: 10px;
   bottom: 10px;
-  width: 84px;
-  height: 92px;
-  background: url("logo.png") center / contain no-repeat;
+  width: 88px;
+  height: 88px;
+  background: var(--logo-url, url("logo.svg")) center / contain no-repeat;   /* js/themedLogo.js: in the theme colour */
   opacity: 0.09;
   pointer-events: none;
 }

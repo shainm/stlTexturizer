@@ -43,6 +43,7 @@ import { setDownloadSink } from './exporter.js';
 import { THREE } from './threeCompat.js';
 import { getCamera, getRenderer, getCurrentMesh, setDiagEdges, requestRender } from './viewer.js';
 import { initSettingsMenu, modelColors, currentThemeColor, materialColors, modelColorMode } from './pdsSettings.js';
+import { onLogoIcon } from './themedLogo.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -1053,6 +1054,7 @@ export async function initPersonal(app) {
   initColours(app);
   initSettingsMenu(app);
   if (!(await connect())) return; // plain web page: no local file features
+  onLogoIcon((frames) => call('app-icon', { frames }));   // launcher/icon.ico in the theme colour
   interceptPickers(app);
   watchDrops(app);
   initExportButton(app);

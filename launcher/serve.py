@@ -106,6 +106,36 @@ def _locate(name, size, mtime_ms, extra_dirs):
     return fallback
 
 
+def _write_app_icon(frames):
+    """launcher/icon.ico (the shortcuts' icon) from the page's PNG frames
+    ({size: base64}, js/themedLogo.js), so it follows the theme colour.
+    Only written when it changed; then Explorer is told to redraw icons."""
+    import base64
+    import ctypes
+    import struct
+    pngs = sorted(((int(s), base64.b64decode(b)) for s, b in frames.items()), reverse=True)
+    head = struct.pack("<HHH", 0, 1, len(pngs))
+    offset, entries = 6 + 16 * len(pngs), b""
+    for size, png in pngs:
+        d = 0 if size >= 256 else size
+        entries += struct.pack("<BBBBHHII", d, d, 0, 0, 1, 32, len(png), offset)
+        offset += len(png)
+    data = head + entries + b"".join(png for _, png in pngs)
+    path = os.path.join(root, "launcher", "icon.ico")
+    try:
+        with open(path, "rb") as f:
+            if f.read() == data:
+                return False
+    except OSError:
+        pass
+    tmp = path + ".part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+    ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # SHCNE_ASSOCCHANGED
+    return True
+
+
 def _stat(path):
     try:
         st = os.stat(path)
@@ -222,6 +252,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "path": dst})
             if route == "/api/locate":
                 return self._json({"path": _locate(args["name"], args["size"], args.get("mtime"), args.get("dirs"))})
+            if route == "/api/app-icon":
+                return self._json({"ok": True, "changed": _write_app_icon(args["frames"])})
             if route == "/api/open-folder":
                 os.startfile(args["path"])
                 return self._json({"ok": True})

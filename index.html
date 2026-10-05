@@ -27,7 +27,8 @@
   <meta name="twitter:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
   <meta name="twitter:image" content="https://bumpmesh.com/assets/preview.jpg" />
   <meta name="twitter:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
-  <link rel="icon" type="image/png" href="logo.png" />
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
+  <script type="module" src="js/themedLogo.js"></script>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="panel-look.css" />
   <script>
@@ -83,7 +84,7 @@
     <!-- Settings menu (the gear). Filled and wired by js/pdsSettings.js. -->
     <div id="pds-settings" class="pds-settings hidden" role="dialog" aria-labelledby="pds-settings-title">
       <div class="pds-settings-head">
-        <img src="logo.png" alt="" width="22" height="22" />
+        <img class="app-logo" src="logo.svg" alt="" width="22" height="22" />
         <span id="pds-settings-title">BumpMesh <span id="app-version" class="app-version"></span></span>
         <button id="pds-settings-close" class="pds-close" type="button" aria-label="Close">&#215;</button>
       </div>

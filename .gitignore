@@ -11,3 +11,6 @@ test-fixtures/
 .env
 .codegraph
 __pycache__/
+
+# built by launcher/make_shortcuts.ps1, then kept in the theme colour by serve.py
+launcher/icon.ico

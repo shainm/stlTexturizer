@@ -114,7 +114,7 @@ Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and ex
 ```
 index.html            # Main entry point
 style.css             # Styles (light / dark theme)
-logo.png              # Favicon & header logo
+logo.svg / logo.png   # Logo in the default colour (js/themedLogo.js draws it in the theme colour)
 CNAME                 # Custom domain (bumpmesh.com)
 textures/             # Built-in JPG/PNG displacement map images (96 textures) + thumbs/
 js/
