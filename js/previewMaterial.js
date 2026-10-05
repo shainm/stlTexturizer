@@ -81,6 +81,16 @@ const sharedGLSL = /* glsl */`
   uniform float     topAngleLimit;
   uniform int       noDownwardZ;
   uniform int       useDisplacement;
+  uniform float     printZScale;     // Z heights = printZScale × X/Y heights (1 = off)
+
+  // Height scale on a surface with normal n — must match printZFactor in
+  // displacement.js: 1 on a vertical wall, printZScale on a flat top/bottom.
+  float printZFactor(vec3 n) {
+    float len2 = dot(n, n);
+    if (len2 < 1e-20) return 1.0;
+    float z2 = n.z * n.z / len2;
+    return sqrt((1.0 - z2) + printZScale * printZScale * z2);
+  }
 
   const float PI     = 3.14159265358979;
   const float TWO_PI = 6.28318530717959;
@@ -321,7 +331,7 @@ const vertexShader = /* glsl */`
       // Displace along smooth normal so all copies of the same position
       // arrive at the same point (watertight, no cracks).
       vec3 sN = length(smoothNormal) > 1e-6 ? normalize(smoothNormal) : safeN;
-      pos = position + sN * h;
+      pos = position + sN * (h * printZFactor(sN));
       // Overhang protection: never move a vertex below its original Z.
       if (noDownwardZ == 1 && pos.z < position.z) pos.z = position.z;
     }
@@ -441,6 +451,8 @@ const fragmentShader = /* glsl */`
     if (layerCount > 2) bumpLayer(2, PN, w.z, dhx, dhy, coverSum);
     if (layerCount > 3) bumpLayer(3, PN, w.w, dhx, dhy, coverSum);
     coverSum = clamp(coverSum, 0.0, 1.0);
+    float zf = printZFactor(PN);
+    dhx *= zf; dhy *= zf;
 
     vec3 dp1 = dFdx(vViewPos);
     vec3 dp2 = dFdy(vViewPos);
@@ -550,7 +562,8 @@ export function createPreviewMaterial(layers, settings) {
  *   mappingBlend, seamBandWidth, capAngle, cylinderCenterX, cylinderCenterY,
  *   cylinderRadius, textureAspectU, textureAspectV, blendAdd }
  * @param {object} settings  { bounds, bottomAngleLimit, topAngleLimit,
- *   noDownwardZ, useDisplacement, activeLayer (index into `layers`),
+ *   noDownwardZ, useDisplacement, printZScale (Z height multiplier, 1 = off),
+ *   activeLayer (index into `layers`),
  *   boundaryFalloff, boundaryFalloffCurve (the active layer's, for the
  *   per-fragment edge falloff), layeredTint (grey instead of orange for
  *   surfaces outside the active layer) }
@@ -599,6 +612,7 @@ export function updateMaterial(material, layers, settings) {
   u.topAngleLimit.value    = settings.topAngleLimit    ?? 0.0;
   u.noDownwardZ.value      = settings.noDownwardZ      ? 1 : 0;
   u.useDisplacement.value  = settings.useDisplacement  ? 1 : 0;
+  u.printZScale.value      = settings.printZScale      ?? 1;
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
@@ -636,6 +650,7 @@ function buildUniforms() {
     topAngleLimit:    { value: 0.0 },
     noDownwardZ:      { value: 0 },
     useDisplacement:  { value: 0 },
+    printZScale:      { value: 1 },
     boundaryEdgeTex:      { value: createFallbackDataTexture() },
     boundaryEdgeCount:    { value: 0 },
     boundaryEdgeTexWidth: { value: 1.0 },
