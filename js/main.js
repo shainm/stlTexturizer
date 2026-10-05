@@ -25,6 +25,7 @@ import { initSidebarToggle } from './sidebarToggle.js';
 import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMaterial.js';
 import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
+import { printZScale } from './displacement.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { buildAdjacency, bucketFill,
@@ -148,6 +149,11 @@ const settings = {
   boundaryFalloffCurve: 'ease',
   symmetricDisplacement: false,
   noDownwardZ: false,
+  // 3D Print Settings (PDS edition): the part is in its print orientation;
+  // with printZScaleOn, tops/bottoms get printZScale x the texture height
+  // and slopes blend (displacement.js printZFactor). Global, not per layer.
+  printZScaleOn: false,
+  printZScale: 2,
   extendUntextured: true,
   smoothBottom: true,
   harvestFlatFaces: true,
@@ -425,6 +431,10 @@ const symmetricDispToggle    = document.getElementById('symmetric-displacement')
 const dispPreviewToggle      = document.getElementById('displacement-preview');
 const dispPreviewSpinner     = document.getElementById('displacement-preview-spinner');
 const noDownwardZChk         = document.getElementById('no-downward-z-chk');
+const printZChk              = document.getElementById('print-z-chk');
+const printZSlider           = document.getElementById('print-z-scale');
+const printZVal              = document.getElementById('print-z-scale-val');
+const printZReadout          = document.getElementById('print-z-readout');
 const extendUntexturedChk          = document.getElementById('extend-untextured-chk');
 const smoothBottomChk        = document.getElementById('smooth-bottom-chk');
 const smoothBottomRow        = document.getElementById('smooth-bottom-row');
@@ -1679,6 +1689,7 @@ function wireEvents() {
     settings.textureHeight = v;
     settings.amplitude = (settings.invertDisplacement ? -1 : 1) * v;
     checkAmplitudeWarning();
+    _syncPrintZUI();
     return v.toFixed(2);
   });
   amplitudeVal.addEventListener('change', checkAmplitudeWarning);
@@ -1726,6 +1737,17 @@ function wireEvents() {
     settings.noDownwardZ = noDownwardZChk.checked;
     updatePreview();
   });
+  printZChk.addEventListener('change', () => {
+    settings.printZScaleOn = printZChk.checked;
+    _syncPrintZUI();
+    updatePreview();
+  });
+  linkSlider(printZSlider, printZVal, v => {
+    settings.printZScale = v;
+    _syncPrintZUI();
+    return v.toFixed(2);
+  });
+  _syncPrintZUI();
   smoothBottomChk.checked = settings.smoothBottom;
   smoothBottomChk.addEventListener('change', () => {
     settings.smoothBottom = smoothBottomChk.checked;
@@ -3921,6 +3943,19 @@ async function handleModelFile(file, stepSettings = null) {
 
 // ── Live preview ──────────────────────────────────────────────────────────────
 
+// 3D Print Settings: dim the multiplier while off and show what the active
+// layer's texture height becomes on walls and on tops/bottoms.
+function _syncPrintZUI() {
+  const on = settings.printZScaleOn;
+  printZSlider.disabled = printZVal.disabled = !on;
+  printZSlider.closest('.form-row').classList.toggle('pds-dim', !on);
+  const h = settings.textureHeight ?? 0;
+  const k = printZScale(settings);
+  printZReadout.textContent = on
+    ? `Walls (X/Y): ${h.toFixed(2)} mm · Tops/bottoms (Z): ${(h * k).toFixed(2)} mm · slopes in between`
+    : `Off: ${h.toFixed(2)} mm everywhere`;
+}
+
 function checkAmplitudeWarning() {
   if (!currentBounds) return;
   const minDim = Math.min(currentBounds.size.x, currentBounds.size.y, currentBounds.size.z);
@@ -4701,6 +4736,7 @@ function _materialSettings(preview) {
     bottomAngleLimit: settings.bottomAngleLimit,
     topAngleLimit:    settings.topAngleLimit,
     noDownwardZ:      settings.noDownwardZ,
+    printZScale:      printZScale(settings),
     // The displaced mesh exists only once its async build finishes; until
     // then the base mesh keeps bump-only shading.
     useDisplacement: settings.useDisplacement && !!dispPreviewGeometry,
@@ -5651,6 +5687,7 @@ const PERSISTED_KEYS = [
   'amplitude', 'textureHeight', 'invertDisplacement',
   'invertTexture',
   'symmetricDisplacement', 'noDownwardZ', 'extendUntextured', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'textureSmoothing',
+  'printZScaleOn', 'printZScale',
   'mappingBlend', 'seamBandWidth', 'capAngle', 'boundaryFalloff', 'boundaryFalloffCurve',
   'bottomAngleLimit', 'topAngleLimit',
   'refineLength', 'maxTriangles',
@@ -5924,6 +5961,12 @@ function applySettingsSnapshot(snap) {
     preserveUntexturedChk.checked = snap.preserveUntextured;
     preserveUntexturedChk.dispatchEvent(new Event('change', { bubbles: true }));
   }
+  // Z multiplier before the toggle, so the toggle's preview update sees both.
+  setLinkedVal(printZVal, snap.printZScale);
+  if (snap.printZScaleOn != null) {
+    printZChk.checked = snap.printZScaleOn;
+    printZChk.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 
   // Cylindrical-mode state. cylinderCenterX/Y/radius pass through unchanged
   // (null is meaningful — falls back to AABB defaults during projection).
@@ -6017,6 +6060,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   amplitude: 0.5, textureHeight: 0.5, invertDisplacement: false,
   invertTexture: false,
   symmetricDisplacement: false, noDownwardZ: false, extendUntextured: true, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, textureSmoothing: 0,
+  printZScaleOn: false, printZScale: 2,
   mappingBlend: 1, seamBandWidth: 0.5, capAngle: 20, boundaryFalloff: 0,
   boundaryFalloffCurve: 'ease',
   bottomAngleLimit: 5, topAngleLimit: 0,

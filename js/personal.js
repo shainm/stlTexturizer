@@ -10,6 +10,9 @@
  *
  *  - Version label marks this edition.
  *  - Preview colours for textured / untextured surfaces (remembered).
+ *  - 3D Print Settings (in index.html / main.js, since it is a saved
+ *    setting): tops/bottoms get printZScale x the texture height of walls
+ *    (displacement.js printZFactor, mirrored in the preview shader).
  *  - With the desktop launcher's local server (launcher/serve.py):
  *      · Load Model / Load project open a native picker, so the file's real
  *        location is known;
@@ -130,6 +133,7 @@ function el(tag, attrs = {}, ...kids) {
 
 function injectStyle() {
   document.head.append(el('style', {}, `
+    .pds-dim { opacity: .45; }
     .pds-modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center;
       justify-content: center; z-index: 10000; }
     .pds-card { background: var(--surface); color: var(--text); border: 1px solid var(--border);
