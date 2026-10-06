@@ -488,6 +488,15 @@ let _layerStripSig = '';
 // ── Mesh diagnostics DOM refs ────────────────────────────────────────────────
 const meshDiagnostics    = document.getElementById('mesh-diagnostics');
 const meshDiagDismiss    = document.getElementById('mesh-diag-dismiss');
+const meshDiagBtn        = document.getElementById('mesh-diag-btn');   // checkmark by the gear: opens the popup
+
+/** Show or hide the mesh check popup (its button mirrors it). */
+function setDiagOpen(open) {
+  meshDiagnostics.classList.toggle('hidden', !open);
+  meshDiagBtn.classList.toggle('active', open);
+  meshDiagBtn.setAttribute('aria-expanded', String(open));
+  if (!open) clearDiagHighlight();
+}
 const meshDiagFast       = document.getElementById('mesh-diag-fast');
 const meshDiagRunBtn     = document.getElementById('mesh-diag-run-btn');
 const meshDiagSpinner    = document.getElementById('mesh-diag-spinner');
@@ -1875,10 +1884,8 @@ function wireEvents() {
   welcomeLink.addEventListener('click', () => openWelcome({ allowDismissPersist: false }));
 
   // ── Mesh diagnostics dismiss ──
-  meshDiagDismiss.addEventListener('click', () => {
-    meshDiagnostics.classList.add('hidden');
-    clearDiagHighlight();
-  });
+  meshDiagDismiss.addEventListener('click', () => setDiagOpen(false));
+  meshDiagBtn.addEventListener('click', () => setDiagOpen(meshDiagnostics.classList.contains('hidden')));
 
   // ── Support banner dismiss ──
   document.getElementById('store-cta-dismiss').addEventListener('click', () => {
@@ -3887,7 +3894,8 @@ async function handleModelFile(file, stepSettings = null) {
     dispPreviewToggle.checked = false;
 
     // Reset mesh diagnostics for the new mesh
-    meshDiagnostics.classList.add('hidden');
+    setDiagOpen(false);
+    meshDiagBtn.classList.add('hidden');
     meshDiagAdvanced.classList.add('hidden');
     lastFastDiag = null;
     lastAdvancedDiag = null;
@@ -4018,7 +4026,8 @@ function applyDiagSeverity() {
   }
   meshDiagnostics.classList.remove('diag-ok', 'diag-warn', 'diag-error');
   meshDiagnostics.classList.add('diag-' + severity);
-  meshDiagnostics.classList.toggle('diag-corner-tr', severity !== 'ok');
+  meshDiagBtn.classList.remove('diag-ok', 'diag-warn', 'diag-error');
+  meshDiagBtn.classList.add('diag-' + severity);
 }
 
 function clearDiagHighlight() {
@@ -4158,7 +4167,8 @@ function updateMeshDiagnostics(adjData, triCount) {
   clearDiagHighlight();
   renderFastDiag(lastFastDiag);
 
-  meshDiagnostics.classList.remove('hidden');
+  // The result waits behind the checkmark by the gear until it is clicked.
+  meshDiagBtn.classList.remove('hidden');
   meshDiagAdvanced.classList.add('hidden');
   meshDiagRunBtn.disabled = false;
 }

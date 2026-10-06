@@ -46,6 +46,9 @@ const DEFAULT_KEY = LS + 'default-profile';
 const STYLE_KEY = LS + 'style';              // also read by index.html: gradient (default) | matte | glass
 const MODEL_COLORS_KEY = LS + 'model-colors';  // theme (default) | material
 const PIVOT_KEY = LS + 'pivot';              // surface (default) | center
+const HIDE_OPTIONS_KEY = LS + 'hide-options';  // 1 = the view options box is hidden
+const HIDE_HINT_KEY = LS + 'hide-hint';      // 1 = the mouse-controls hint is hidden
+const HIDE_STATS_KEY = LS + 'hide-stats';    // 1 = the part stats are hidden
 const DEFAULT_ACCENT = '#4a84c4';
 
 // The tray panels' accents, plus BumpMesh's own purple.
@@ -223,6 +226,20 @@ function initPivot() {
     sync();
   });
   sync();
+}
+
+// 3D view > Show controls hint / Show part stats (html[data-hide-hint|stats]).
+function initViewToggles() {
+  for (const [id, key, attr] of [['pds-show-options', HIDE_OPTIONS_KEY, 'data-hide-options'], ['pds-show-hint', HIDE_HINT_KEY, 'data-hide-hint'],['pds-show-stats', HIDE_STATS_KEY, 'data-hide-stats']]) {
+    const box = $(id);
+    const hidden = lsGet(key, null) === '1';
+    box.checked = !hidden;
+    document.documentElement.toggleAttribute(attr, hidden);
+    box.addEventListener('change', () => {
+      document.documentElement.toggleAttribute(attr, !box.checked);
+      lsSet(key, box.checked ? null : '1');
+    });
+  }
 }
 
 function initStyle() {
@@ -653,6 +670,7 @@ export function initSettingsMenu(app) {
   initAppearance();
   initModelColors();
   initPivot();
+  initViewToggles();
   refreshViewer();   // the 3D view in the saved style's colours
   const profiles = initProfiles(app, toast);
   const menu = initMenu(() => profiles.render());

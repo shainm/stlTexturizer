@@ -270,9 +270,13 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 }
 .variant-add:hover { color: var(--accent); }
 
+/* Part stats: bottom right of the view. */
 #viewport-footer {
-  flex: 0 0 auto;       /* keeps its size; the variant bar wraps instead */
-  max-width: 100%;
+  position: absolute;
+  right: calc(var(--view-right) + var(--gap));
+  bottom: var(--gap);
+  z-index: 3;
+  max-width: calc(100% - var(--view-right) - 2 * var(--gap));
   min-height: 34px;
   padding: 6px 14px;
   background: var(--panel-bg-plain);
@@ -280,7 +284,44 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   border-radius: var(--panel-radius);
   box-shadow: var(--panel-shadow);
 }
-.viewport-controls-hint { margin-left: 8px; }
+html[data-hide-stats] #viewport-footer { display: none; }
+
+/* View options (wireframe, perspective, section, colours): top left, one per line. */
+.viewport-options {
+  position: absolute;
+  top: var(--gap);
+  left: var(--gap);
+  z-index: 3;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
+}
+
+html[data-hide-options] .viewport-options { display: none; }
+.viewport-options .section-controls { margin-left: 0; }
+.viewport-options .pds-colors { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-left: 0; }
+
+/* Mouse controls: centred at the top of the view. */
+.viewport-controls-hint {
+  position: absolute;
+  top: calc(var(--gap) + 10px);
+  left: calc((100% - var(--view-right)) / 2);
+  transform: translateX(-50%);
+  z-index: 3;
+  margin: 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+html[data-hide-hint] .viewport-controls-hint { display: none; }
+@media (max-width: 1100px) { .viewport-controls-hint { display: none; } }
 
 /* Undo / Redo / Reset / settings: round floating buttons, top right of the view. */
 .viewport-toolbar {
@@ -308,6 +349,13 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   box-shadow: var(--panel-shadow);
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
+.pds-check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; cursor: pointer; }
+.vp-btn.hidden { display: none; }
+/* the mesh check's checkmark: the theme's accent when the mesh is fine, amber / red otherwise */
+#mesh-diag-btn { color: var(--accent-hover); }
+#mesh-diag-btn.diag-warn { color: #f59e0b; }
+#mesh-diag-btn.diag-error { color: var(--danger); }
+#mesh-diag-btn.active { background: var(--pl-track-hot); }
 .vp-btn:hover:not(:disabled) { background: var(--pl-track-hot); }
 .vp-btn:disabled { color: var(--text-muted); opacity: 0.55; cursor: not-allowed; }
 .vp-btn.active { background: var(--accent); border-color: transparent; color: #fff; }
@@ -316,8 +364,21 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 /* Viewport overlays keep to the visible part of the view. */
 .drop-hint { right: var(--view-right); }
 .gpu-warning { left: calc((100% - var(--view-right)) / 2); }
-.mesh-diagnostics { bottom: calc(var(--gap) + 52px); left: var(--gap); }
-.mesh-diagnostics.diag-corner-tr { top: calc(var(--gap) + 48px); right: calc(var(--view-right) + var(--gap)); }
+/* The mesh check popup drops from the checkmark button, under the toolbar. */
+.mesh-diagnostics,
+.mesh-diagnostics.diag-corner-tr {
+  top: calc(var(--gap) + 36px + 8px);
+  bottom: auto;
+  left: auto;
+  right: calc(var(--view-right) + var(--gap));
+}
+/* ...in the theme's colours when the mesh is fine (amber / red keep their meaning) */
+.mesh-diagnostics.diag-ok {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-bg-plain));
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+.mesh-diagnostics .mesh-diag-run-btn { color: var(--text); }
 
 /* No support banners or popups outside the settings menu. */
 #store-cta-wrapper,
