@@ -226,6 +226,10 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   border: 0;
   outline: 0;
 }
+/* Reordering by dragging: the chip being dragged fades, the line shows where it lands. */
+.variant-chip.dragging { opacity: 0.4; }
+.variant-chip.drop-before { box-shadow: -4px 0 0 -1px var(--accent); }
+.variant-chip.drop-after  { box-shadow:  4px 0 0 -1px var(--accent); }
 .variant-chip.active .variant-btn {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--surface2));

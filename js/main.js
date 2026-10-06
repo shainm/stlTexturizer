@@ -41,7 +41,7 @@ import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink, getDownloadSink } from './exporter.js';
 import { initPersonal, askResume } from './personal.js';
-import { initVariants } from './variants.js';
+import { initVariants, chipReorder } from './variants.js';
 import { setPreviewColors } from './previewMaterial.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
@@ -1530,6 +1530,7 @@ function wireEvents() {
   dropZone.addEventListener('dragleave', () => { if (--dragDepth <= 0) endDrag(); });
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
+    if (!hasFiles(e)) return;   // a chip being reordered, not a file
     const overlayUp = !dropChoice.classList.contains('hidden');
     const mode = e.target.closest?.('[data-drop]')?.dataset.drop;   // 'add' | 'new' | undefined
     endDrag();
@@ -6072,6 +6073,7 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
 
   if (includeModel) {
     // Written in the original pose (issue #82); re-importing re-centers and
+  if (includeModel) payload.modelName = currentStlName;
     // replays poseRotation, so project round-trips stay stable.
     zipFiles['model.stl'] = _geometryToBinarySTL(currentGeometry, true);
     // The paint tree indexes the base geometry's triangles, so it only makes
@@ -6257,7 +6259,9 @@ async function importProject(file, opts = {}) {
       // Load model first — handleModelFile resets scaleU/scaleV/offsets/refineLength
       // AND clears any existing paint mask, so applied settings + restored mask
       // below will correctly override those resets.
-      const stlFile = new File([unzipped['model.stl']], 'model.stl', { type: 'application/octet-stream' });
+      // Named after the model it was saved from (older projects: the personal edition's job name), not "model".
+      const savedName = String(data?.modelName || data?.pds?.name || 'model').replace(/[\\/:*?"<>|]+/g, '_');
+      const stlFile = new File([unzipped['model.stl']], `${savedName}.stl`, { type: 'application/octet-stream' });
       await handleModelFile(stlFile);
 
       // The bundled model is stored in its original pose; replay the saved
@@ -6773,8 +6777,48 @@ function _renderModelBar() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'variant-btn';
-    btn.title = `${m.name}\nClick to switch to this model`;
+    btn.title = `${m.name}\nClick to switch to this model · double-click the name to rename`;
+/** Double-click a model's name to rename it (its export file names follow). */
+let _modelEditing = false;
+function _renameModel(m, nameEl) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'variant-rename';
+  input.value = m.name;
+  input.maxLength = 60;
+  input.style.width = `${Math.max(6, Math.min(24, m.name.length + 2))}ch`;
+  nameEl.replaceWith(input);
+  input.closest('.variant-chip').draggable = false;   // so dragging over the text selects it
+  _modelEditing = true;
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    _modelEditing = false;
+    const text = input.value.trim().replace(/[\\/:*?"<>|]+/g, '_');
+    if (save && text) {
+      m.name = text;
+      if (m.id === _models.activeId) currentStlName = text;
+      _scheduleSessionSave();
+    }
+    _renderModelBar();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();   // typing here must not trigger app shortcuts
+    if (ev.key === 'Enter') finish(true);
+    else if (ev.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', ev => ev.stopPropagation());
+  input.addEventListener('dblclick', ev => ev.stopPropagation());
+  // Pressing inside selected text would start dragging that text; collapse it so the press selects instead.
+  input.addEventListener('mousedown', () => { input.setSelectionRange(input.selectionEnd, input.selectionEnd); });
+}
+
     const num = document.createElement('b');
+  if (_modelEditing) return;
     num.textContent = String(i + 1);
     const name = document.createElement('span');
     name.textContent = m.name;
@@ -6789,6 +6833,7 @@ function _renderModelBar() {
     x.addEventListener('click', (e) => { e.stopPropagation(); _removeModel(m.id); });
     chip.append(btn, x);
     _modelBar.append(chip);
+    btn.addEventListener('dblclick', () => _renameModel(m, name));
   });
 }
 
@@ -6797,6 +6842,11 @@ function _restoreProjectModels(unzipped, data) {
   const f = data?.models && unzipped[data.models];
   if (!f) return;
   let rec;
+    chipReorder(chip, i, 'model', (from, to) => {
+      _models.items.splice(to, 0, _models.items.splice(from, 1)[0]);
+      _renderModelBar();
+      _scheduleSessionSave();
+    });
   try { rec = JSON.parse(strFromU8(f)); } catch { return; }
   const saved = (rec?.items || []).filter(it => unzipped[it.file]);
   if (saved.length < 2 || !saved.some(it => it.id === rec.active)) return;
@@ -6806,7 +6856,7 @@ function _restoreProjectModels(unzipped, data) {
     let paint = null;
     const p = it.paint && PaintTree.fromJSON(it.paint);
     if (p) { p.layerIds = p.layerIds.map(id => (idMap.has(id) ? idMap.get(id) : id)); paint = p; }
-    return { id: it.id, name: it.name, stl: unzipped[it.file], pose: it.pose, refineLength: it.refineLength, cyl: it.cyl, paint };
+    return { id: it.id, name: it.id === rec.active ? currentStlName : it.name, stl: unzipped[it.file], pose: it.pose, refineLength: it.refineLength, cyl: it.cyl, paint };
   });
   _models.activeId = rec.active;
   _models.nextId = Math.max(...saved.map(it => it.id)) + 1;

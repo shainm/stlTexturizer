@@ -14,6 +14,42 @@ const PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ar
 const X_SVG = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>';
 
 /**
+ * Make a chip draggable to a new place in its bar. `kind` keeps one bar's chips from being dropped on another's;
+ * `onMove(from, to)` gets the old index and the index the chip should end up at.
+ */
+export function chipReorder(chip, index, kind, onMove) {
+  const type = `application/x-chip-${kind}`;
+  const mine = (e) => [...(e.dataTransfer?.types || [])].includes(type);
+  const after = (e) => e.clientX >= chip.getBoundingClientRect().left + chip.offsetWidth / 2;
+  const clear = () => chip.classList.remove('drop-before', 'drop-after');
+  chip.draggable = true;
+  chip.addEventListener('dragstart', (e) => {
+    if (e.target.closest?.('input')) { e.preventDefault(); return; }   // the name being edited, not the chip
+    e.dataTransfer.setData(type, String(index));
+    e.dataTransfer.effectAllowed = 'move';
+    chip.classList.add('dragging');
+  });
+  chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+  chip.addEventListener('dragover', (e) => {
+    if (!mine(e)) return;
+    e.preventDefault();
+    chip.classList.toggle('drop-after', after(e));
+    chip.classList.toggle('drop-before', !after(e));
+  });
+  chip.addEventListener('dragleave', clear);
+  chip.addEventListener('drop', (e) => {
+    if (!mine(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let to = index + (after(e) ? 1 : 0);
+    const from = Number(e.dataTransfer.getData(type));
+    if (from < to) to--;
+    clear();
+    if (to !== from) onMove(from, to);
+  });
+}
+
+/**
  * @param {object} o
  * @param {HTMLElement} o.host   the bar to fill
  * @param {Function} o.t         i18n lookup
@@ -61,6 +97,7 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
     input.maxLength = 40;
     input.style.width = `${Math.max(6, Math.min(24, v.label.length + 2))}ch`;
     name.replaceWith(input);
+    input.closest('.variant-chip').draggable = false;   // so dragging over the text selects it
     editing = true;
     input.focus();
     input.select();
@@ -84,6 +121,8 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
     input.addEventListener('blur', () => finish(true));
     input.addEventListener('click', e => e.stopPropagation());
     input.addEventListener('dblclick', e => e.stopPropagation());
+    // Pressing inside selected text would start dragging that text; collapse it so the press selects instead.
+    input.addEventListener('mousedown', () => { input.setSelectionRange(input.selectionEnd, input.selectionEnd); });
   }
 
   function render() {
@@ -128,6 +167,10 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
         render();
       });
 
+      chipReorder(chip, i, 'variant', (from, to) => {
+        variants.splice(to, 0, variants.splice(from, 1)[0]);
+        render();
+      });
       chip.append(btn, x);
       host.append(chip);
     });
