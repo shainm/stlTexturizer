@@ -5,8 +5,9 @@
  * compares versions in the same view; the little x on a chip removes it.
  *
  * A variant is an undo snapshot, so restoring one goes through the same code
- * as Ctrl+Z (and can itself be undone). Variants live for the loaded model:
- * loading another model or project clears them.
+ * as Ctrl+Z (and can itself be undone). Loading another model keeps them (minus
+ * their painted surfaces, which belong to the old model), so they can be applied
+ * to every model of a project; they are saved with projects and shared settings.
  */
 
 const PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 7.5v9M7.5 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -210,6 +211,8 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
   render();
   return {
     clear() { variants = []; activeId = null; render(); },
+    /** A new model is loaded: keep the chips, but painted surfaces belong to the old model's triangles. */
+    dropPaint() { keepEdits(); for (const v of variants) v.snap = { ...v.snap, paint: null }; render(); },
     serialize,
     restore,
     refresh,

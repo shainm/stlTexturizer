@@ -241,6 +241,35 @@ main {
   background: rgba(124, 106, 255, 0.06);
 }
 
+/* Two targets over the viewport while a file is dragged in: add to the project / open as a new one. */
+.drop-choice {
+  position: absolute;
+  inset: 0 var(--view-right, 0px) 0 0;   /* stops at the settings sidebar, like the drop hint */
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;   /* equal space between the boxes and to the viewport's sides */
+}
+.drop-choice.hidden { display: none; }
+.drop-box {
+  flex: 0 0 25%;
+  height: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--text);
+  padding: 8px;
+  background: color-mix(in srgb, var(--surface2, #222) 60%, transparent);
+  border: 2px dashed var(--border, #555);
+  border-radius: var(--radius, 8px);
+}
+.drop-box strong { font-size: 16px; }
+.drop-box span { font-size: 12px; color: var(--text-muted); }
+.drop-box.hot { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
 .drop-hint {
   position: absolute;
   inset: 0;

@@ -206,6 +206,11 @@
     <!-- ─── 3-D Viewport ─────────────────────────────────────────── -->
     <section id="viewport-section">
       <div id="drop-zone" class="drop-zone">
+        <!-- Shown while a file is dragged over a loaded project: add it, or start a new project (main.js) -->
+        <div id="drop-choice" class="drop-choice hidden">
+          <div class="drop-box" data-drop="add"><strong>Add to project</strong><span>Keeps all the current settings and variants</span></div>
+          <div class="drop-box" data-drop="new"><strong>Open as new project</strong><span>Closes the current project</span></div>
+        </div>
         <div id="drop-hint" class="drop-hint">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#555" stroke-width="1.2" stroke-linejoin="round"/>
@@ -281,6 +286,8 @@
         <div class="viewport-controls-hint" data-i18n="ui.controlsHint">Left drag: orbit &nbsp;·&nbsp; Right drag: pan &nbsp;·&nbsp; Scroll: zoom</div>
       </div>
       <!-- Saved setting sets to flip between (js/variants.js) -->
+      <!-- The project's models to swap between (main.js, "Models of the project") -->
+      <div id="model-bar" class="variant-bar hidden" role="group" aria-label="Models"></div>
       <div id="variant-bar" class="variant-bar hidden" role="group" data-i18n-aria-label="variants.bar" aria-label="Variants"></div>
       </div>
     </section>

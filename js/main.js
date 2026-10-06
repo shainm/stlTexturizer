@@ -1509,19 +1509,36 @@ function wireEvents() {
   });
 
   // Drag & drop on the viewport section
+  // With a project loaded, a drag offers two boxes: add the file to the project, or open it as a new one.
+  const dropChoice = document.getElementById('drop-choice');
+  const dropBoxes = [...dropChoice.querySelectorAll('[data-drop]')];
+  let dragDepth = 0;
+  const endDrag = () => { dragDepth = 0; dropZone.classList.remove('drag-over'); dropChoice.classList.add('hidden'); };
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  dropZone.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth++;
+    if (_userModelLoaded && currentGeometry) dropChoice.classList.remove('hidden');
+  });
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
-    dropZone.classList.add('drag-over');
+    // The dashed frame around the viewport is for plain drops; with the two boxes up, only they show.
+    dropZone.classList.toggle('drag-over', dropChoice.classList.contains('hidden'));
+    const over = e.target.closest?.('[data-drop]');
+    for (const b of dropBoxes) b.classList.toggle('hot', b === over);
   });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('dragleave', () => { if (--dragDepth <= 0) endDrag(); });
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
-    dropZone.classList.remove('drag-over');
+    const overlayUp = !dropChoice.classList.contains('hidden');
+    const mode = e.target.closest?.('[data-drop]')?.dataset.drop;   // 'add' | 'new' | undefined
+    endDrag();
+    if (overlayUp && !mode) return;   // dropped beside the boxes: nothing chosen
     const files = [...e.dataTransfer.files];
     const bmFile = files.find(f => /\.bumpmesh$/i.test(f.name));
     if (bmFile) { importProject(bmFile).catch(err => alert(t('alerts.importFailed', { msg: err.message }))); return; }
     const file = files.find(f => MODEL_FILE_RE.test(f.name));
-    if (file) handleModelFile(file);
+    if (file) { if (mode === 'add') _openModelFile(file); else handleModelFile(file); }
     else if (files.length) alert(t('alerts.unsupportedModelType', { name: files[0].name }));
   });
 
@@ -3937,6 +3954,8 @@ async function handleModelFile(file, stepSettings = null) {
     previewExportBtn.disabled = !_hasTexturedLayer();
     updateSmartResBtnState();
     updatePreview();
+    _modelLoaded(file);
+    return true;
   } catch (err) {
     // A superseded STEP import (user dropped another file mid-tessellation)
     // is not a failure — the newer load owns the UI now.
@@ -3944,6 +3963,7 @@ async function handleModelFile(file, stepSettings = null) {
       console.error('Failed to load model:', err);
       alert(t('alerts.loadFailed', { msg: err.message }));
     }
+    return false;
   } finally {
     if (isStep && mySeq === _importSeq) importProgress.classList.add('hidden');
     _undoApplyDepth--;
@@ -6069,6 +6089,17 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
       if (legacy) zipFiles['mask.json'] = strToU8(JSON.stringify(legacy));
     }
   }
+  // The project's other models ride along (the live one is also model.stl).
+  if (includeModel && _models.items.length > 1) {
+    _captureActiveModel();
+    const items = _models.items.map((e) => {
+      zipFiles[`models/${e.id}.stl`] = e.stl;
+      return { id: e.id, name: e.name, file: `models/${e.id}.stl`, pose: e.pose, refineLength: e.refineLength, cyl: e.cyl,
+        paint: e.paint ? PaintTree.toJSON(e.paint) : null };
+    });
+    zipFiles['models.json'] = strToU8(JSON.stringify({ active: _models.activeId, layerIds: layers.map(L => L.id), items }));
+    payload.models = 'models.json';
+  }
   if (includeTexture) {
     const blob = await new Promise(r => customSource.fullCanvas.toBlob(r, 'image/png'));
     zipFiles['texture.png'] = new Uint8Array(await blob.arrayBuffer());
@@ -6085,6 +6116,15 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
       payload.layers[i].texture = fname;
       payload.layers[i].activeMapName = entry.name;
     }
+  }
+  // The variant tabs ride along (paint only with the model it belongs to).
+  const vs = _variants?.serialize();
+  if (vs?.items.length) {
+    const items = vs.items.map(it => ({
+      ...it, snap: { ...it.snap, paint: includeModel && it.snap.paint ? PaintTree.toJSON(it.snap.paint) : null },
+    }));
+    zipFiles['variants.json'] = strToU8(JSON.stringify({ active: vs.active, layerIds: layers.map(L => L.id), items }));
+    payload.variants = 'variants.json';
   }
   if (extra) Object.assign(payload, extra);
   zipFiles['settings.json'] = strToU8(JSON.stringify(payload, null, 2));
@@ -6274,6 +6314,20 @@ async function importProject(file, opts = {}) {
       _commitUndoCapture();
     }
   }
+  // After the finally: a full import clears the variants' paint with the undo stacks.
+  await _restoreProjectVariants(unzipped, data, loadMode === 'all');
+  if (loadMode === 'all') _restoreProjectModels(unzipped, data);
+}
+
+/** The variant tabs saved in a project (replacing the current ones); none saved leaves the current tabs. */
+async function _restoreProjectVariants(unzipped, data, withPaint) {
+  const f = data?.variants && unzipped[data.variants];
+  if (!f) return;
+  let rec;
+  try { rec = JSON.parse(strFromU8(f)); } catch { return; }
+  if (!rec?.items?.length) return;
+  for (const it of rec.items) it.snap.paint = withPaint && it.snap.paint ? PaintTree.fromJSON(it.snap.paint) : null;
+  await _restoreSessionVariants(rec);
 }
 
 /**
@@ -6498,7 +6552,7 @@ function _clearUndoStacks() {
   if (_undoCaptureTimer) { clearTimeout(_undoCaptureTimer); _undoCaptureTimer = null; }
   _baselineSnapshot = _captureUndoSnapshot();
   _updateUndoButtons();
-  _variants?.clear();   // saved variants belong to the model they were made on
+  _variants?.dropPaint();   // saved variants carry over to the next model, minus its predecessor's paint
 }
 
 function _applyUndoSnapshot(snap) {
@@ -6611,6 +6665,154 @@ if (_settingsPanel) {
 }
 window.addEventListener('pointerup', _variants.refresh);
 
+// ── Models of the project ───────────────────────────────────────────────────
+// Dropping another model while one is loaded adds it to the project instead of
+// replacing it. The layers, variants and every other setting stay as they are;
+// only what belongs to one part is kept per model (its paint, pose, resolution
+// and cylinder axis). Swapping reloads the model from the STL kept in memory.
+const _models = { items: [], activeId: null, nextId: 1 };   // item: { id, name, stl, pose, refineLength, cyl, paint }
+let _modelSwapping = false;
+const _modelBar = document.getElementById('model-bar');
+
+/** Make sure the loaded model has an entry (a lone model gets one only when a second arrives). */
+function _ensureActiveModel() {
+  if (_models.items.length || !currentGeometry) return;
+  _models.items.push({ id: _models.nextId++, name: currentStlName });
+  _models.activeId = _models.items[0].id;
+}
+
+/** Store the live model's own state in its entry. */
+function _captureActiveModel() {
+  const e = _models.items.find(m => m.id === _models.activeId);
+  if (!e || !currentGeometry) return;
+  e.name = currentStlName;
+  e.stl = _geometryToBinarySTL(currentGeometry, true);
+  e.pose = currentPoseRot.toArray();
+  e.refineLength = settings.refineLength;
+  e.cyl = { x: settings.cylinderCenterX, y: settings.cylinderCenterY, r: settings.cylinderRadius };
+  e.paint = paintTree ? paintTree.serialize({ leafCov: true }) : null;
+}
+
+/** handleModelFile loaded `file`: a model added to the project joins the list, any other load starts a new project. */
+function _modelLoaded(file) {
+  if (_modelSwapping) return;
+  if (file.__addToProject) {
+    _models.items.push({ id: _models.nextId++, name: currentStlName });
+    _models.activeId = _models.items[_models.items.length - 1].id;
+  } else {
+    _models.items = [];
+    _models.activeId = null;
+  }
+  _renderModelBar();
+}
+
+/** Open a dropped / picked model: added to the project when one is already loaded. */
+function _openModelFile(file) {
+  if (_userModelLoaded && currentGeometry) {
+    _ensureActiveModel();
+    _captureActiveModel();
+    file.__addToProject = true;
+  }
+  return handleModelFile(file);
+}
+
+async function _swapModel(id) {
+  const e = _models.items.find(m => m.id === id);
+  if (!e || id === _models.activeId || _modelSwapping || !e.stl) return false;
+  _captureActiveModel();
+  _modelSwapping = true;
+  try {
+    if (!(await handleModelFile(new File([e.stl], `${e.name}.stl`, { type: 'application/octet-stream' })))) return false;
+    // Same order as a project import: pose first, then the settings and paint that sit on the posed mesh.
+    const q = new THREE.Quaternion().fromArray(e.pose || [0, 0, 0, 1]).normalize();
+    if (Math.abs(q.w) < 1 - 1e-12) { _rotateGeometry(q); _rotateFinalize(); }
+    if (e.refineLength != null) {
+      refineLenVal.value = e.refineLength;
+      refineLenVal.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    settings.cylinderCenterX = e.cyl?.x ?? null;
+    settings.cylinderCenterY = e.cyl?.y ?? null;
+    settings.cylinderRadius  = e.cyl?.r ?? null;
+    updateCylinderUIVisibility();
+    if (e.paint && paintTree) {
+      _syncTreeLayers();
+      if (!paintTree.deserialize(e.paint)) console.warn('Saved paint does not match the model');
+      _syncTreeLayers();
+    }
+    _materialiseActiveLayer();
+    _renderLayerStrip();
+    refreshExclusionOverlay();
+    updatePreview();
+    _models.activeId = id;
+    _clearUndoStacks();   // the baseline must include the restored paint
+    _scheduleSessionSave();
+    return true;
+  } finally {
+    _modelSwapping = false;
+    _renderModelBar();
+  }
+}
+
+async function _removeModel(id) {
+  if (_models.items.length < 2) return;
+  if (id === _models.activeId) {
+    const other = _models.items.find(m => m.id !== id);
+    if (!(await _swapModel(other.id))) return;
+  }
+  _models.items = _models.items.filter(m => m.id !== id);
+  _renderModelBar();
+  _scheduleSessionSave();
+}
+
+function _renderModelBar() {
+  _modelBar.classList.toggle('hidden', _models.items.length < 2);
+  _modelBar.textContent = '';
+  _models.items.forEach((m, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'variant-chip' + (m.id === _models.activeId ? ' active' : '');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'variant-btn';
+    btn.title = `${m.name}\nClick to switch to this model`;
+    const num = document.createElement('b');
+    num.textContent = String(i + 1);
+    const name = document.createElement('span');
+    name.textContent = m.name;
+    btn.append(num, name);
+    btn.addEventListener('click', () => _swapModel(m.id).catch(err => alert(t('alerts.loadFailed', { msg: err.message }))));
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'variant-x';
+    x.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>';
+    x.title = 'Remove this model from the project';
+    x.setAttribute('aria-label', x.title);
+    x.addEventListener('click', (e) => { e.stopPropagation(); _removeModel(m.id); });
+    chip.append(btn, x);
+    _modelBar.append(chip);
+  });
+}
+
+/** The models saved in a project (the active one is already loaded from model.stl); fewer than two leave the list alone. */
+function _restoreProjectModels(unzipped, data) {
+  const f = data?.models && unzipped[data.models];
+  if (!f) return;
+  let rec;
+  try { rec = JSON.parse(strFromU8(f)); } catch { return; }
+  const saved = (rec?.items || []).filter(it => unzipped[it.file]);
+  if (saved.length < 2 || !saved.some(it => it.id === rec.active)) return;
+  const idMap = new Map();
+  (rec.layerIds || []).forEach((old, k) => { if (layers[k]) idMap.set(old, layers[k].id); });
+  _models.items = saved.map((it) => {
+    let paint = null;
+    const p = it.paint && PaintTree.fromJSON(it.paint);
+    if (p) { p.layerIds = p.layerIds.map(id => (idMap.has(id) ? idMap.get(id) : id)); paint = p; }
+    return { id: it.id, name: it.name, stl: unzipped[it.file], pose: it.pose, refineLength: it.refineLength, cyl: it.cyl, paint };
+  });
+  _models.activeId = rec.active;
+  _models.nextId = Math.max(...saved.map(it => it.id)) + 1;
+  _renderModelBar();
+}
+
 // ── Personal edition (js/personal.js): unified Export, local files, colours ──
 _offerResumeSession();   // its popup styles come from initPersonal, which injects them synchronously
 initPersonal({
@@ -6634,6 +6836,16 @@ initPersonal({
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
   variants: _variants,   // saved variants (js/variants.js): list(), runEach()
+  models: {              // the project's models (see "Models of the project")
+    list: () => { _ensureActiveModel(); return _models.items.map(m => ({ id: m.id, name: m.name })); },
+    activeId: () => { _ensureActiveModel(); return _models.activeId; },
+    swapTo: async (id) => {
+      if (id === _models.activeId) return true;
+      const ok = await _swapModel(id);
+      await new Promise(r => setTimeout(r, 150));   // let the new model settle
+      return ok;
+    },
+  },
   hasModel: () => !!currentGeometry,
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers

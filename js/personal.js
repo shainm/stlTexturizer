@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026 CNCKitchen (Stefan Hermann) and contributors
  * SPDX-License-Identifier: AGPL-3.0-only
  */
@@ -100,7 +100,10 @@ const dirname = (p) => p.replace(/[\\/][^\\/]*$/, '');
 const basename = (p) => p.replace(/^.*[\\/]/, '');
 const stem = (n) => n.replace(/\.[^.]+$/, '');
 const safe = (s) => String(s).replace(/\.(png|jpe?g|webp|bmp|gif|tiff?)$/i, '')
-  .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'texture';
+  .replace(/[<>:"/\\|?*\x00-\x1f\s-]+/g, '_').replace(/^_|_$/g, '')
+  .replace(/(^|_)(\p{L})/gu, (_, p, c) => p + c.toUpperCase()) || 'Texture';
+/** The model's own folder inside the export folder: the same capitalised name, with spaces (not nested again when the export folder already is it). */
+const jobDir = (name) => (safe(basename(state.dest)) === safe(name) ? state.dest : join(state.dest, safe(name).replace(/_/g, ' ')));
 const SUB = { textured: 'Textured', project: 'Texture Settings', original: 'Original', archive: 'Archive' };
 // Earlier exports named the settings folder "project files"; still read from it.
 const LEGACY_PROJECT = 'project files';
@@ -166,7 +169,9 @@ async function fingerprint(app) {
   const files = unzipSync(await app.buildProjectZip({}));
   const s = JSON.parse(strFromU8(files['settings.json']));
   delete s.pds;
-  return hashString(JSON.stringify(s) + '|' + (files['paint.json'] ? strFromU8(files['paint.json']) : ''));
+  // Paint, the project's other models (and their paint) and the variant tabs all count as changes.
+  const text = (f) => (files[f] ? strFromU8(files[f]) : '');
+  return hashString(JSON.stringify(s) + '|' + text('paint.json') + '|' + text('models.json') + '|' + text('variants.json'));
 }
 
 /**
@@ -891,6 +896,8 @@ function watchDrops(app) {
     const files = [...(e.dataTransfer?.files || [])];
     const f = files.find(x => /\.bumpmesh$/i.test(x.name)) || files.find(x => /\.(stl|obj|3mf|step|stp)$/i.test(x.name));
     if (!f) return;
+    // Dropped on "Add to project": it joins the open project, which keeps its own folder and name.
+    if (e.target.closest?.('[data-drop="add"]') && !/\.bumpmesh$/i.test(f.name)) return;
     const isProject = /\.bumpmesh$/i.test(f.name);
     (async () => {
       const dirs = [state.dest, state.originalPath && dirname(state.originalPath), lsGet('dest', '')].filter(Boolean);
@@ -975,6 +982,9 @@ function exportStems(variants, vary, name, tl) {
     variantId: v ? v.id : undefined,
     value,
     stem: value == null ? base[i] : `${base[i]}_${VARY[vary.key].tag}${varyNum(vary.key, value)}`,
+    // Each variant / varied value gets its own folder under Textured, e.g. "Textured\Bricks\Smooth 5\".
+    dir: join(v ? base[i].slice(name.length + 1).replace(/_/g, ' ') : '',
+      value == null ? '' : `${VARY[vary.key].tag[0].toUpperCase()}${VARY[vary.key].tag.slice(1)} ${varyNum(vary.key, value)}`),
   })));
 }
 function setVary(key, value) {
@@ -1033,6 +1043,15 @@ async function exportDialog(app) {
     el('div', { class: 'item sub muted' }, 'Variants (none ticked = the current settings):'),
     ...vchks.map(({ v, box }) => el('div', { class: 'item sub' }, el('label', {}, box, ` ${v.num} · ${v.label}`))),
   ] : [];
+  // Models of the project: every ticked one is exported in turn (none ticked = the loaded one).
+  const mlist = app.models ? app.models.list() : [];
+  const startId = mlist.length ? app.models.activeId() : null;
+  const mchks = mlist.length > 1 ? mlist.map(m => ({ m, box: el('input', { type: 'checkbox', checked: true }) })) : [];
+  const modelsNow = () => (doModel.checked ? mchks.filter(x => x.box.checked).map(x => x.m) : []);
+  const modelRows = mchks.length ? [
+    el('div', { class: 'item sub muted' }, 'Models (none ticked = the loaded model):'),
+    ...mchks.map(({ m, box }) => el('div', { class: 'item sub' }, el('label', {}, box, ` ${m.name}`))),
+  ] : [];
   const varyNow = () => (doVary.checked && doModel.checked ? parseVaryValues(varyText.value, varyKey.value) : null);
   rows.vary = item(doVary, 'Vary Setting');
   const warn = el('div', { class: 'item sub' });
@@ -1040,7 +1059,8 @@ async function exportDialog(app) {
   const where = el('div', { class: 'muted' });
   const fmtNow = () => fmtBox.querySelector('input:checked').value;
   function refresh() {
-    const n = safe(nameIn.value || 'model');
+    const n = safe(nameIn.value.trim() || app.modelName() || 'model');
+    const jd = state.dest ? jobDir(n).slice(state.dest.length + 1) : n; // '' when the export folder is already the model's
     rows.model.classList.toggle('off', !doModel.checked);
     rows.orig.classList.toggle('off', !doOrig.checked);
     origPathRow.classList.toggle('off', !doOrig.checked);
@@ -1048,21 +1068,34 @@ async function exportDialog(app) {
     rows.vary.classList.toggle('off', !doModel.checked);
     varyRow.classList.toggle('off', !doVary.checked || !doModel.checked);
     const vv = varyNow();
-    const stems = doModel.checked ? exportStems(vs, vv && vv.length ? { key: varyKey.value, values: vv } : null, n, textureLabel(app)) : [];
-    const modelLines = stems.map(s => `${SUB.textured}\\${s.stem}.${fmtNow()}`);
-    // Variants × values multiply the files; say so before it happens.
-    warn.textContent = vs.length && vv && vv.length
-      ? `Variants and Vary Setting together: ${vs.length} × ${vv.length} = ${stems.length} model files.` : '';
+    const varyOpt = vv && vv.length ? { key: varyKey.value, values: vv } : null;
+    const ms = modelsNow();
+    // The loaded model uses the Name field, the others their own names.
+    const exporting = !doModel.checked ? [] : ms.length > 1 || (ms.length && ms[0].id !== startId)
+      ? ms.map(m => ({ name: m.id === startId ? n : safe(m.name) })) : [{ name: n }];
+    const modelLines = exporting.flatMap(({ name }) => {
+      const dir = state.dest ? jobDir(name).slice(state.dest.length + 1) : name;
+      // Each run's model sits in its own folder under Textured, with the project that made it.
+      return exportStems(vs, varyOpt, name, textureLabel(app)).flatMap(s => {
+        const d = `${dir ? dir + '\\' : ''}${SUB.textured}\\${s.dir ? s.dir + '\\' : ''}`;
+        return [`${d}${s.stem}.${fmtNow()}`, doProj.checked && s.dir && `${d}${s.stem}.bumpmesh`].filter(Boolean);
+      });
+    });
+    const pre = jd ? jd + '\\' : '';
+    // Models × variants × values multiply the files; say so before it happens.
+    const factors = [exporting.length > 1 && ['models', exporting.length], vs.length && ['variants', vs.length], vv && vv.length && ['values', vv.length]].filter(Boolean);
+    warn.textContent = factors.length > 1
+      ? `${factors.map(f => `${f[1]} ${f[0]}`).join(' × ')} = ${modelLines.filter(l => !l.endsWith('.bumpmesh')).length} model files.` : '';
     warn.classList.toggle('hidden', !warn.textContent);
     const lines = [
       ...modelLines,
-      doProj.checked && `${SUB.project}\\${projectFile(n)}`,
-      doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
-      doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
+      doProj.checked && `${pre}${SUB.project}\\${projectFile(n)}`,
+      doShared.checked && `${pre}${SUB.project}\\${SHARED_FILE}`,
+      doOrig.checked && state.originalPath && `${pre}${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
     where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('ul', {}, lines.map(l => el('li', {}, l))));
   }
-  for (const x of [nameIn, doModel, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box)]) x.addEventListener('input', refresh);
+  for (const x of [nameIn, doModel, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
   fmtBox.addEventListener('change', refresh);
   refresh();
 
@@ -1070,7 +1103,7 @@ async function exportDialog(app) {
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Folder'), destBox, el('button', { class: 'pds-btn', onclick: pickDest }, 'Browse…')),
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Name'), nameIn),
     el('hr'),
-    rows.model, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
+    rows.model, ...modelRows, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
     el('hr'),
     where);
 
@@ -1093,9 +1126,11 @@ async function exportDialog(app) {
     else if (!opts.format && !opts.project && !opts.shared && opts.originalMode === 'none') problem = 'Tick at least one thing to export.';
     else if (opts.originalMode !== 'none' && !state.originalPath) problem = 'The original model\'s location is unknown — use Locate…, or untick "Original model".';
     if (problem) { await notice('Export', problem); continue; }
-    if (opts.variants.length && opts.vary) {
-      const count = opts.variants.length * opts.vary.values.length;
-      const ok = await modal('Many files', el('p', {}, `${opts.variants.length} variants × ${opts.vary.values.length} values of "${VARY[opts.vary.key].label}" will export ${count} model files, and every one is a full texturing run. Continue?`),
+    const picked = modelsNow();
+    const counts = [picked.length > 1 && picked.length, opts.variants.length, opts.vary && opts.vary.values.length].filter(Boolean);
+    if (counts.length > 1) {
+      const count = counts.reduce((a, b) => a * b, 1);
+      const ok = await modal('Many files', el('p', {}, `${counts.join(' × ')} = ${count} model files (${[picked.length > 1 && 'models', opts.variants.length && 'variants', opts.vary && `values of "${VARY[opts.vary.key].label}"`].filter(Boolean).join(' × ')}), and every one is a full texturing run. Continue?`),
         [{ label: 'Back', value: null }, { label: `Export ${count} files`, value: 1, primary: true }]);
       if (!ok) continue;
     }
@@ -1106,7 +1141,38 @@ async function exportDialog(app) {
     lsSet('do-vary', doVary.checked ? '1' : '0'); lsSet('vary-key', varyKey.value); lsSet('vary-values-' + varyKey.value, varyText.value);
     if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
     state.name = nameIn.value.trim() || app.modelName();
-    await runExport(app, opts, fpNow);
+    const others = picked.filter(m => m.id !== startId);
+    if (!others.length) {
+      // The loaded model only (ticked, or none ticked), unless another single one is chosen below.
+      await runExport(app, opts, fpNow);
+      return;
+    }
+    // Other models of the project: each is loaded in turn and exported under its own name
+    // (textured files only), then the loaded model again with the project / shared / original.
+    const mine = state.name, sink = [];
+    let ok = true;
+    try {
+      for (const m of others) {
+        if (!(ok = await app.models.swapTo(m.id))) break;
+        state.name = m.name;
+        if (!(ok = await runExport(app, { ...opts, project: false, shared: false, originalMode: 'none' }, fpNow, sink))) break;
+      }
+    } finally {
+      state.name = mine;
+      await app.models.swapTo(startId);
+    }
+    if (ok) {
+      const withMine = picked.some(m => m.id === startId);
+      await runExport(app, withMine ? opts : { ...opts, format: null }, fpNow, sink);
+    }
+    if (sink.length) {
+      app.showSponsorOverlay();
+      const done = await modal('Exported', el('div', {},
+        el('p', {}, `Saved to ${state.dest}`),
+        el('ul', {}, sink.map(p => el('li', {}, p.slice(state.dest.length + 1))))),
+        [{ label: 'Open folder', value: 'open' }, { label: 'Done', value: null, primary: true }]);
+      if (done === 'open') await call('open-folder', { path: state.dest });
+    }
     return;
   }
 }
@@ -1131,26 +1197,28 @@ async function migrateFolders(dest) {
   }
 }
 
-async function runExport(app, { format, project, shared, originalMode, vary, variants = [] }, fp) {
-  await migrateFolders(state.dest);
+/** Writes one model's export; false = cancelled or failed. With `sink` (an array) the written paths are added to it and no summary is shown. */
+async function runExport(app, { format, project, shared, originalMode, vary, variants = [] }, fp, sink = null) {
+  const job = jobDir(state.name);
+  try { await migrateFolders(job); } catch {} // a new model folder has nothing to migrate
   const name = safe(state.name), tl = textureLabel(app);
-  const texturedDir = join(state.dest, SUB.textured);
+  const texturedDir = join(job, SUB.textured);
   // One model file, or one per ticked variant and/or per value of the setting being varied.
-  const runs = !format ? [] : exportStems(variants, vary, name, tl).map(s => ({ variantId: s.variantId, value: s.value, target: join(texturedDir, `${s.stem}.${format}`) }));
+  const runs = !format ? [] : exportStems(variants, vary, name, tl).map(s => ({ variantId: s.variantId, value: s.value, target: join(texturedDir, s.dir, `${s.stem}.${format}`), dir: s.dir }));
   // Project = a variation: the loaded one refreshed when nothing changed, else a new one.
   const cur = state.variant;
   const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
   let projectPath = null, created = Date.now();
-  if (project && refresh) { projectPath = join(state.dest, SUB.project, basename(cur.path)); created = cur.created; }
+  if (project && refresh) { projectPath = join(job, SUB.project, basename(cur.path)); created = cur.created; }
   else if (project) {
     const base = variationFile(name, tl, created).replace(/\.bumpmesh$/, '');
-    projectPath = join(state.dest, SUB.project, `${base}.bumpmesh`);
+    projectPath = join(job, SUB.project, `${base}.bumpmesh`);
     // Two variations in the same minute must not collide.
-    for (let k = 2; (await exists(projectPath)).exists; k++) projectPath = join(state.dest, SUB.project, `${base} (${k}).bumpmesh`);
+    for (let k = 2; (await exists(projectPath)).exists; k++) projectPath = join(job, SUB.project, `${base} (${k}).bumpmesh`);
   }
-  const sharedPath = join(state.dest, SUB.project, SHARED_FILE);
+  const sharedPath = join(job, SUB.project, SHARED_FILE);
   const origName = state.originalPath ? basename(state.originalPath) : null;
-  const origTarget = origName ? join(state.dest, SUB.original, origName) : null;
+  const origTarget = origName ? join(job, SUB.original, origName) : null;
   const origAlreadyThere = !!(origTarget && state.originalPath.toLowerCase() === origTarget.toLowerCase());
   const doOrig = originalMode !== 'none' && origTarget && !origAlreadyThere;
 
@@ -1165,14 +1233,14 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
     const ok = await modal(`"${name}" already exists here`,
       el('div', {},
         el('p', {}, `Last edited ${new Date(when).toLocaleString()}. Archive the old files and replace them?`),
-        el('ul', {}, old.map(o => el('li', {}, o.path.slice(state.dest.length + 1)))),
+        el('ul', {}, old.map(o => el('li', {}, o.path.slice(job.length + 1)))),
         el('p', { class: 'muted' }, `They'll be moved to ${SUB.archive}\\${name} ${stamp(when)}\\`)),
       [{ label: 'Cancel', value: null }, { label: 'Archive and replace', value: 1, primary: true }]);
-    if (!ok) return;
+    if (!ok) return false;
     // Unique folder: two archives in the same minute must not collide.
-    let archiveDir = join(state.dest, SUB.archive, `${name} ${stamp(when)}`);
-    for (let k = 2; (await exists(archiveDir)).exists; k++) archiveDir = join(state.dest, SUB.archive, `${name} ${stamp(when)} (${k})`);
-    for (const o of old) await call('move', { src: o.path, dst: join(archiveDir, o.path.slice(state.dest.length + 1)) });
+    let archiveDir = join(job, SUB.archive, `${name} ${stamp(when)}`);
+    for (let k = 2; (await exists(archiveDir)).exists; k++) archiveDir = join(job, SUB.archive, `${name} ${stamp(when)} (${k})`);
+    for (const o of old) await call('move', { src: o.path, dst: join(archiveDir, o.path.slice(job.length + 1)) });
   }
 
   const written = [];
@@ -1191,6 +1259,13 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       }
       await writeFile(r.target, caught[0].blob);
       written.push(r.target);
+      // Alongside it, the project with the settings that made it (a folder per run only).
+      if (project && r.dir) {
+        const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align: state.align ? { ...state.align } : null } });
+        const p = r.target.replace(/\.[^.\\]+$/, '.bumpmesh');
+        await writeFile(p, new Blob([zip]));
+        written.push(p);
+      }
       return true;
     };
     // Export a set of runs under the current settings, stepping the varied slider through its
@@ -1214,8 +1289,8 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
     } else {
       ok = await runSet(runs);
     }
-    if (!ok) return;
-    app.showSponsorOverlay();
+    if (!ok) return false;
+    if (!sink) app.showSponsorOverlay();
   }
 
   const align = state.align ? { ...state.align } : null;
@@ -1245,11 +1320,13 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
     written.push(origTarget);
   }
 
+  if (sink) { sink.push(...written); return true; }
   const done = await modal('Exported', el('div', {},
-    el('p', {}, `Saved to ${state.dest}`),
-    el('ul', {}, written.map(p => el('li', {}, p.slice(state.dest.length + 1))))),
+    el('p', {}, `Saved to ${job}`),
+    el('ul', {}, written.map(p => el('li', {}, p.slice(job.length + 1))))),
     [{ label: 'Open folder', value: 'open' }, { label: 'Done', value: null, primary: true }]);
-  if (done === 'open') await call('open-folder', { path: state.dest });
+  if (done === 'open') await call('open-folder', { path: job });
+  return true;
 }
 
 function initExportButton(app) {
