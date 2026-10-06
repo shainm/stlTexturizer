@@ -163,12 +163,112 @@ main.sidebar-collapsed { --view-right: 0px; }
 main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 
 /* The bottom bar: a floating panel in the bottom left. */
-#viewport-footer {
+#viewport-bottom {
   position: absolute;
   left: var(--gap);
   bottom: var(--gap);
   max-width: calc(100% - var(--view-right) - 2 * var(--gap));
   z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+#viewport-bottom > * { pointer-events: auto; }
+#viewport-bottom > .hidden { display: none; }
+
+/* Compare variants: chips beside the bar, "+" saves the current settings. */
+.variant-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  flex-wrap: wrap;      /* chips that don't fit stack onto new rows, growing upward */
+  gap: 8px 6px;
+  padding: 5px 8px;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
+}
+.variant-chip {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+.variant-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 130px;
+  height: 24px;
+  padding: 0 14px 0 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.variant-btn b { font-weight: 700; color: var(--text); }
+.variant-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.variant-btn:hover { border-color: var(--accent); }
+.variant-rename {
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  outline: 0;
+}
+.variant-chip.active .variant-btn {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+  color: var(--text);
+}
+.variant-x {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  color: var(--text-muted);
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.variant-chip:hover .variant-x,
+.variant-x:focus-visible { display: flex; }
+.variant-x:hover { color: var(--text); border-color: var(--accent); }
+.variant-add {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.variant-add:hover { color: var(--accent); }
+
+#viewport-footer {
+  flex: 0 0 auto;       /* keeps its size; the variant bar wraps instead */
+  max-width: 100%;
   min-height: 34px;
   padding: 6px 14px;
   background: var(--panel-bg-plain);
@@ -796,7 +896,7 @@ main.sidebar-collapsed .gallery-panel {
 .viewport-toolbar,
 .sidebar-toggle,
 .pds-settings,
-#viewport-footer,
+#viewport-bottom,
 .mesh-diagnostics.diag-corner-tr {
   transition: right 0.36s cubic-bezier(0.2, 0.8, 0.2, 1), max-width 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -804,7 +904,7 @@ main.sidebar-collapsed .gallery-panel {
 
 @media (prefers-reduced-motion: reduce) {
   #settings-panel, .gallery-panel, .viewport-toolbar, .sidebar-toggle, .pds-settings,
-  #viewport-footer, .pds-fold-body, .pds-fold-chevron, .pds-foldable > h2 { transition: none !important; }
+  #viewport-bottom, .pds-fold-body, .pds-fold-chevron, .pds-foldable > h2 { transition: none !important; }
 }
 /* Portrait phones: the stacked panel just hides, as before. */
 @media (max-width: 699px) and (orientation: portrait) {

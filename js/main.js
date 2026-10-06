@@ -40,6 +40,7 @@ import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink, getDownloadSink } from './exporter.js';
 import { initPersonal } from './personal.js';
+import { initVariants } from './variants.js';
 import { setPreviewColors } from './previewMaterial.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
@@ -6374,12 +6375,15 @@ function _flushUndoCapture() {
   }
 }
 
+let _variants = null;   // js/variants.js, set up after the undo hooks below
+
 function _clearUndoStacks() {
   _undoStack.length = 0;
   _redoStack.length = 0;
   if (_undoCaptureTimer) { clearTimeout(_undoCaptureTimer); _undoCaptureTimer = null; }
   _baselineSnapshot = _captureUndoSnapshot();
   _updateUndoButtons();
+  _variants?.clear();   // saved variants belong to the model they were made on
 }
 
 function _applyUndoSnapshot(snap) {
@@ -6475,6 +6479,21 @@ window.addEventListener('keydown', (e) => {
 _restoreSessionSettings();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
+
+// Compare variants: saved setting sets beside the bottom bar (js/variants.js).
+_variants = initVariants({
+  host: document.getElementById('variant-bar'),
+  t,
+  capture: _captureUndoSnapshot,
+  apply: _applyUndoSnapshot,
+  equal: _undoSnapshotsEqual,
+  hasModel: () => !!currentGeometry,
+});
+if (_settingsPanel) {
+  _settingsPanel.addEventListener('input',  _variants.refresh);
+  _settingsPanel.addEventListener('change', _variants.refresh);
+}
+window.addEventListener('pointerup', _variants.refresh);
 
 // ── Personal edition (js/personal.js): unified Export, local files, colours ──
 initPersonal({
