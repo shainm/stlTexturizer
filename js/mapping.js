@@ -360,22 +360,9 @@ export function computeUV(pos, normal, mode, settings, bounds) {
       // instead of being squeezed (phi barely changes with radius).
       const rho = Math.sqrt(rx*rx + ry*ry);
       const vCap = normal.z < 0 ? 1 - rho / refV : rho / refV;
-      // Polar pinches the texture to a point at the axis, so near the centre
-      // fade to the flat top-down projection (true scale, no swirl). Kept to a
-      // small disc: mixing the two unrelated mappings over a wide band shows
-      // up as streaky moire.
-      const R = Math.max(refU / TWO_PI, 1e-6);
-      const pRaw = Math.max(0, Math.min(1, (rho / R - 0.1) / 0.1));
-      const wPolar = pRaw * pRaw * (3 - 2 * pRaw);
-      const polarSamples = wPolar > 0 ? seamSamples(vCap) : [];
-      const capSamples = polarSamples.map(s => ({ u: s.u, v: s.v, w: s.w * wPolar }));
-      if (wPolar < 1) {
-        const flatU = (normal.z < 0 ? -rx : rx) / refU + 0.5;
-        const tFlat = applyTransform(flatU, ry / refV + 0.5, scaleU, scaleV, offsetU, offsetV, cosR, sinR);
-        capSamples.push({ u: tFlat.u, v: tFlat.v, w: 1 - wPolar });
-      }
-      if (capW >= 1 && capSamples.length === 1) return capSamples[0];
-      const samples = capW >= 1 ? [] : sideSamples.map(s => ({ u: s.u, v: s.v, w: s.w * (1 - capW) }));
+      const capSamples = seamSamples(vCap);
+      if (capW >= 1) return capSamples.length === 1 ? capSamples[0] : { triplanar: true, samples: capSamples };
+      const samples = sideSamples.map(s => ({ u: s.u, v: s.v, w: s.w * (1 - capW) }));
       for (const s of capSamples) samples.push({ u: s.u, v: s.v, w: s.w * capW });
       return { triplanar: true, samples };
     }
