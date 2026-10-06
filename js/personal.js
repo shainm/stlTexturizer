@@ -914,6 +914,30 @@ function textureLabel(app) {
   return names.length ? names.join('+') : 'textured';
 }
 
+// ── Several versions of one export ──────────────────────────────────────────
+// One setting is stepped through a list of values, one model file per value
+// ("<name>_<textures>_smooth5.stl"), e.g. to compare print times. The sliders
+// are driven like a click, so every handler runs exactly as for a user drag.
+const VARY = {
+  smoothing: { label: 'Texture smoothing', slider: 'texture-smoothing', tag: 'smooth', dflt: '0, 4, 8' },
+  height:    { label: 'Texture height (mm)', slider: 'amplitude', tag: 'height', dflt: '0.3, 0.5, 0.8' },
+  res:       { label: 'Resolution (mm)', slider: 'refine-length', tag: 'res', dflt: '0.5, 0.75, 1' },
+  tris:      { label: 'Output triangles', slider: 'max-triangles', tag: 'tris', dflt: '250000, 500000, 750000', name: v => `${Math.round(v / 1000)}k` },
+};
+const varyNum = (key, v) => (VARY[key].name ? VARY[key].name(v) : String(v).replace('.', 'p'));
+/** Valid, distinct values from "0, 4 8" within the slider's range and snapped to its step (at most 12). */
+function parseVaryValues(text, key) {
+  const s = document.getElementById(VARY[key].slider);
+  const lo = parseFloat(s.min), hi = parseFloat(s.max), step = parseFloat(s.step);
+  const snap = (v) => (step > 0 ? +(lo + Math.round((v - lo) / step) * step).toFixed(6) : v);
+  return [...new Set(String(text).split(/[\s,;]+/).map(parseFloat).filter(Number.isFinite).map(v => snap(Math.min(hi, Math.max(lo, v)))))].slice(0, 12);
+}
+function setVary(key, value) {
+  const s = document.getElementById(VARY[key].slider);
+  s.value = value;
+  s.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 async function exportDialog(app) {
   if (!app.canExport()) { await notice('Export', 'Load a model and pick a texture first (or wait for the current export to finish).'); return; }
   if (!state.name) state.name = app.modelName();
@@ -951,6 +975,14 @@ async function exportDialog(app) {
     orig: item(doOrig, 'Original model', origModes),
   };
   const origPathRow = el('div', { class: 'item sub' }, origBox, el('button', { class: 'pds-btn', onclick: pickOrig }, 'Locate…'));
+  // Several versions: one setting stepped through a list of values.
+  const doVary = chk('do-vary', '0');
+  const varyKey = el('select', {}, Object.entries(VARY).map(([k, v]) => el('option', { value: k, selected: k === (VARY[lsGet('vary-key', '')] ? lsGet('vary-key', '') : 'smoothing') }, v.label)));
+  const varyText = el('input', { type: 'text', value: lsGet('vary-values-' + varyKey.value, VARY[varyKey.value].dflt), size: 14, title: 'Values separated by commas, e.g. 0, 4, 8' });
+  const varyRow = el('div', { class: 'item sub' }, varyKey, ' ', varyText);
+  const varyNow = () => (doVary.checked && doModel.checked ? parseVaryValues(varyText.value, varyKey.value) : null);
+  rows.vary = item(doVary, 'Several versions (vary one setting)');
+  varyKey.addEventListener('change', () => { varyText.value = lsGet('vary-values-' + varyKey.value, VARY[varyKey.value].dflt); refresh(); });
   const where = el('div', { class: 'muted' });
   const fmtNow = () => fmtBox.querySelector('input:checked').value;
   function refresh() {
@@ -958,15 +990,21 @@ async function exportDialog(app) {
     rows.model.classList.toggle('off', !doModel.checked);
     rows.orig.classList.toggle('off', !doOrig.checked);
     origPathRow.classList.toggle('off', !doOrig.checked);
+    rows.vary.classList.toggle('off', !doModel.checked);
+    varyRow.classList.toggle('off', !doVary.checked || !doModel.checked);
+    const vv = varyNow();
+    const modelLines = !doModel.checked ? [] : vv && vv.length
+      ? vv.map(v => `${SUB.textured}\\${n}_${textureLabel(app)}_${VARY[varyKey.value].tag}${varyNum(varyKey.value, v)}.${fmtNow()}`)
+      : [`${SUB.textured}\\${n}_${textureLabel(app)}.${fmtNow()}`];
     const lines = [
-      doModel.checked && `${SUB.textured}\\${n}_${textureLabel(app)}.${fmtNow()}`,
+      ...modelLines,
       doProj.checked && `${SUB.project}\\${projectFile(n)}`,
       doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
       doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
     where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('ul', {}, lines.map(l => el('li', {}, l))));
   }
-  for (const x of [nameIn, doModel, doProj, doShared, doOrig]) x.addEventListener('input', refresh);
+  for (const x of [nameIn, doModel, doProj, doShared, doOrig, doVary, varyText]) x.addEventListener('input', refresh);
   fmtBox.addEventListener('change', refresh);
   refresh();
 
@@ -974,7 +1012,7 @@ async function exportDialog(app) {
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Folder'), destBox, el('button', { class: 'pds-btn', onclick: pickDest }, 'Browse…')),
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Name'), nameIn),
     el('hr'),
-    rows.model, rows.proj, rows.shared, rows.orig, origPathRow,
+    rows.model, rows.vary, varyRow, rows.proj, rows.shared, rows.orig, origPathRow,
     el('hr'),
     where);
 
@@ -986,9 +1024,13 @@ async function exportDialog(app) {
       project: doProj.checked,
       shared: doShared.checked,
       originalMode: doOrig.checked ? origModes.querySelector('input:checked').value : 'none',
+      vary: null,
     };
+    const vv = varyNow();
+    if (vv && vv.length) opts.vary = { key: varyKey.value, values: vv };
     let problem = null;
-    if (!state.dest) problem = 'Choose a folder to export into.';
+    if (doVary.checked && doModel.checked && !vv.length) problem = 'Enter at least one value for the setting to vary (e.g. 0, 4, 8).';
+    else if (!state.dest) problem = 'Choose a folder to export into.';
     else if (!opts.format && !opts.project && !opts.shared && opts.originalMode === 'none') problem = 'Tick at least one thing to export.';
     else if (opts.originalMode !== 'none' && !state.originalPath) problem = 'The original model\'s location is unknown — use Locate…, or untick "Original model".';
     if (problem) { await notice('Export', problem); continue; }
@@ -996,6 +1038,7 @@ async function exportDialog(app) {
     lsSet('do-model', doModel.checked ? '1' : '0'); lsSet('do-proj', doProj.checked ? '1' : '0');
     lsSet('do-shared', doShared.checked ? '1' : '0'); lsSet('do-orig', doOrig.checked ? '1' : '0');
     lsSet('format', fmtNow());
+    lsSet('do-vary', doVary.checked ? '1' : '0'); lsSet('vary-key', varyKey.value); lsSet('vary-values-' + varyKey.value, varyText.value);
     if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
     state.name = nameIn.value.trim() || app.modelName();
     await runExport(app, opts, fpNow);
@@ -1023,11 +1066,14 @@ async function migrateFolders(dest) {
   }
 }
 
-async function runExport(app, { format, project, shared, originalMode }, fp) {
+async function runExport(app, { format, project, shared, originalMode, vary }, fp) {
   await migrateFolders(state.dest);
   const name = safe(state.name), tl = textureLabel(app);
   const texturedDir = join(state.dest, SUB.textured);
-  const target = format ? join(texturedDir, `${name}_${tl}.${format}`) : null;
+  // One model file, or one per value of the setting being varied.
+  const runs = !format ? []
+    : vary ? vary.values.map(value => ({ value, target: join(texturedDir, `${name}_${tl}_${VARY[vary.key].tag}${varyNum(vary.key, value)}.${format}`) }))
+      : [{ value: null, target: join(texturedDir, `${name}_${tl}.${format}`) }];
   // Project = a variation: the loaded one refreshed when nothing changed, else a new one.
   const cur = state.variant;
   const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
@@ -1068,14 +1114,28 @@ async function runExport(app, { format, project, shared, originalMode }, fp) {
 
   const written = [];
   // ── Textured model: files caught instead of downloaded. ──
-  if (format) {
-    const caught = [];
-    setDownloadSink((blob, filename) => caught.push({ blob, filename }));
-    try { await app.handleExport([format]); }
-    finally { setDownloadSink(null); }
-    if (caught.length !== 1) return; // failed or cancelled (main.js already said why)
-    await writeFile(target, caught[0].blob);
-    written.push(target);
+  if (runs.length) {
+    // The slider is put back afterwards, so the project below saves the
+    // settings as they were before the run.
+    const slider = vary && document.getElementById(VARY[vary.key].slider);
+    const before = slider && slider.value;
+    try {
+      for (const r of runs) {
+        if (vary) setVary(vary.key, r.value);
+        const caught = [];
+        setDownloadSink((blob, filename) => caught.push({ blob, filename }));
+        try { await app.handleExport([format]); }
+        finally { setDownloadSink(null); }
+        if (caught.length !== 1) { // failed or cancelled (main.js already said why)
+          if (written.length) await notice('Export stopped', `Only ${written.length} of ${runs.length} versions were written.`);
+          return;
+        }
+        await writeFile(r.target, caught[0].blob);
+        written.push(r.target);
+      }
+    } finally {
+      if (slider) setVary(vary.key, before);
+    }
     app.showSponsorOverlay();
   }
 
