@@ -40,9 +40,10 @@ export function initVariants({ host, t, capture, apply, equal, hasModel }) {
   // written back when you leave it. Restoring fires change events and loads
   // textures, so right after a restore the live state is not yet the chip's.
   let appliedAt = 0;
+  let busy = false;   // a batch (runEach) is cycling through variants
   function keepEdits() {
     const v = variants.find(o => o.id === activeId);
-    if (!v || Date.now() - appliedAt < 800) return;
+    if (!v || busy || Date.now() - appliedAt < 800) return;
     const now = capture();
     if (equal(v.snap, now)) return;
     const d = describe(now);
@@ -149,9 +150,44 @@ export function initVariants({ host, t, capture, apply, equal, hasModel }) {
   // Edits mark the active chip as modified; settle first so a slider drag isn't a render per tick.
   const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { keepEdits(); render(); }, 350); };
 
+  /** The saved variants in chip order: [{ id, num, label }]. */
+  function list() {
+    keepEdits();
+    return variants.map((v, i) => ({ id: v.id, num: i + 1, label: v.label }));
+  }
+
+  /**
+   * Restore each variant in turn (ids in the order given) and run `cb(id)` on
+   * it, e.g. to export it; `cb` returning false stops. The settings from before
+   * (and the chip that was active) come back afterwards, whatever happens.
+   */
+  async function runEach(ids, cb) {
+    keepEdits();
+    const before = capture(), beforeActive = activeId;
+    const restore = (snap) => apply({ ...snap, paint: snap.paint ? structuredClone(snap.paint) : null });
+    busy = true;
+    try {
+      for (const id of ids) {
+        const v = variants.find(o => o.id === id);
+        if (!v) continue;
+        restore(v.snap);
+        await new Promise(r => setTimeout(r, 150));   // let the restore settle
+        if (await cb(id) === false) break;
+      }
+    } finally {
+      restore(before);
+      activeId = beforeActive;
+      appliedAt = Date.now();
+      busy = false;
+      render();
+    }
+  }
+
   render();
   return {
     clear() { variants = []; activeId = null; render(); },
     refresh,
+    list,
+    runEach,
   };
 }

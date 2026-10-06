@@ -6516,6 +6516,7 @@ initPersonal({
   },
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
+  variants: _variants,   // saved compare variants (js/variants.js): list(), runEach()
   hasModel: () => !!currentGeometry,
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
