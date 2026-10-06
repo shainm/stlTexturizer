@@ -282,8 +282,10 @@ function modal(title, body, buttons, { live = false } = {}) {
   });
 }
 /** "Resume your last session?" beside the sidebar; resolves true to resume. */
-export async function askResume(name, when) {
+export async function askResume(name, when, thumb) {
   const body = el('div', {},
+    thumb && el('img', { src: thumb, alt: name,
+      style: 'display:block;width:100%;border-radius:6px;border:1px solid var(--border);margin:0 0 10px' }),
     el('p', { style: 'margin:0 0 4px' }, name),
     el('p', { class: 'muted', style: 'margin:0' }, `Saved ${when}`));
   return (await modal('Resume your last session?', body, [

@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWireframe,
          showExportPreview, endExportPreview, isExportPreview,
-         getControls, getCamera, getCurrentMesh,
+         getControls, getCamera, getCurrentMesh, getRenderer, getScene,
          setExclusionOverlay, setHoverPreview, setViewerTheme,
          setProjection, requestRender,
          clearDiagOverlays, setDiagEdges, addDiagFaces,
@@ -5792,14 +5792,29 @@ async function _sessionKv(mode, fn) {
   } finally { db.close(); }
 }
 
+// A small JPEG of the 3D view for the resume popup. The canvas has no preserved drawing buffer, so
+// render and read back in the same tick.
+function _sessionThumb() {
+  try {
+    const r = getRenderer();
+    r.render(getScene(), getCamera());
+    const src = r.domElement, w = 320, h = Math.max(1, Math.round(w * src.height / src.width));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.8);
+  } catch (err) { console.warn('Session thumbnail failed:', err); return null; }
+}
+
 function _scheduleSessionSave() {
   if (_autoSavePaused || !currentGeometry || !_userModelLoaded) return;   // never overwrite with an empty session
   clearTimeout(_sessionSaveTimer);
   _sessionSaveTimer = setTimeout(async () => {
     try {
       const zipped = await _buildProjectZip(true, true);
+      const thumb = _sessionThumb();
       await _sessionKv('readwrite', s => s.put({
-        zip: zipped, name: currentStlName || '', time: Date.now(),
+        zip: zipped, name: currentStlName || '', time: Date.now(), thumb,
         variants: _variants?.serialize(), layerIds: layers.map(L => L.id),
       }, 'last'));
     } catch (err) { console.warn('Session save failed:', err); }
@@ -5826,7 +5841,7 @@ async function _offerResumeSession() {
   try { rec = await _sessionKv('readonly', s => s.get('last')); } catch { return; }
   if (!rec || !rec.zip || _userModelLoaded) return;
   const when = new Date(rec.time).toLocaleString();
-  if (await askResume(rec.name || 'model', when)) {
+  if (await askResume(rec.name || 'model', when, rec.thumb)) {
     try {
       await importProject(new File([rec.zip], (rec.name || 'session') + '.bumpmesh'), { mode: 'all' });
       await _restoreSessionVariants(rec);
