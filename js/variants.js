@@ -1,5 +1,5 @@
 /**
- * Compare variants: a row of saved setting sets beside the viewport's bottom
+ * Variants: a row of saved setting sets beside the viewport's bottom
  * bar. "+" saves the current settings (texture layers, painted surfaces and
  * all) as a new chip; clicking a chip restores it, so flipping between chips
  * compares versions in the same view; the little x on a chip removes it.
@@ -22,7 +22,7 @@ const X_SVG = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" aria-hi
  * @param {() => boolean} o.hasModel
  * @returns {{ clear: () => void, refresh: () => void }}
  */
-export function initVariants({ host, t, capture, apply, equal, hasModel }) {
+export function initVariants({ host, t, capture, apply, equal, hasModel, onChange = () => {} }) {
   let variants = [];      // { id, snap, label, tip }
   let nextId = 1;
   let activeId = null;    // the chip last saved or restored
@@ -87,6 +87,7 @@ export function initVariants({ host, t, capture, apply, equal, hasModel }) {
 
   function render() {
     if (editing) return;
+    onChange();
     host.classList.toggle('hidden', !hasModel());
     host.textContent = '';
     variants.forEach((v, i) => {
@@ -183,9 +184,34 @@ export function initVariants({ host, t, capture, apply, equal, hasModel }) {
     }
   }
 
+  /** The chips as plain data (snapshots without their texture objects) for keeping across a reload. */
+  function serialize() {
+    keepEdits();
+    const strip = (snap) => ({ ...snap, layers: snap.layers.map(l => ({ ...l, mapEntry: null })) });
+    return {
+      active: variants.findIndex(v => v.id === activeId),
+      items: variants.map(v => ({ label: v.label, tip: v.tip, custom: !!v.custom, snap: strip(v.snap) })),
+    };
+  }
+
+  /** Put back what serialize() produced; `fix(snap)` may rebuild a snapshot (async), e.g. to reload its textures. */
+  async function restore(data, fix = async (s) => s) {
+    if (!data || !Array.isArray(data.items)) return;
+    const next = [];
+    for (const it of data.items) {
+      next.push({ id: nextId++, label: it.label, tip: it.tip, custom: it.custom, snap: await fix(it.snap) });
+    }
+    variants = next;
+    activeId = next[data.active]?.id ?? null;
+    appliedAt = Date.now();
+    render();
+  }
+
   render();
   return {
     clear() { variants = []; activeId = null; render(); },
+    serialize,
+    restore,
     refresh,
     list,
     runEach,

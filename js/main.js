@@ -5798,9 +5798,27 @@ function _scheduleSessionSave() {
   _sessionSaveTimer = setTimeout(async () => {
     try {
       const zipped = await _buildProjectZip(true, true);
-      await _sessionKv('readwrite', s => s.put({ zip: zipped, name: currentStlName || '', time: Date.now() }, 'last'));
+      await _sessionKv('readwrite', s => s.put({
+        zip: zipped, name: currentStlName || '', time: Date.now(),
+        variants: _variants?.serialize(), layerIds: layers.map(L => L.id),
+      }, 'last'));
     } catch (err) { console.warn('Session save failed:', err); }
   }, 2000);
+}
+
+// The import gives layers fresh ids (matched by position) and the variants hold the old ones, so
+// rename them in each snapshot, then reload the textures their layers use.
+async function _restoreSessionVariants(rec) {
+  if (!rec.variants?.items?.length || !_variants) return;
+  const idMap = new Map();
+  (rec.layerIds || []).forEach((old, k) => { if (layers[k]) idMap.set(old, layers[k].id); });
+  const re = (id) => (idMap.has(id) ? idMap.get(id) : id);
+  await _variants.restore(rec.variants, async (snap) => {
+    const out = { ...snap, layers: snap.layers.map(l => ({ ...l, id: re(l.id) })) };
+    if (out.paint?.layerIds) out.paint = { ...out.paint, layerIds: out.paint.layerIds.map(re) };
+    for (const l of out.layers) l.mapEntry = await _loadMapEntry(l.mapName, l.customId);
+    return out;
+  });
 }
 
 async function _offerResumeSession() {
@@ -5811,6 +5829,7 @@ async function _offerResumeSession() {
   if (await askResume(rec.name || 'model', when)) {
     try {
       await importProject(new File([rec.zip], (rec.name || 'session') + '.bumpmesh'), { mode: 'all' });
+      await _restoreSessionVariants(rec);
     } catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
   } else {
     try { await _sessionKv('readwrite', s => s.delete('last')); } catch { /* ignore */ }
@@ -6561,7 +6580,7 @@ _restoreSessionSettings();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
 
-// Compare variants: saved setting sets beside the bottom bar (js/variants.js).
+// Variants: saved setting sets beside the bottom bar (js/variants.js).
 _variants = initVariants({
   host: document.getElementById('variant-bar'),
   t,
@@ -6569,6 +6588,7 @@ _variants = initVariants({
   apply: _applyUndoSnapshot,
   equal: _undoSnapshotsEqual,
   hasModel: () => !!currentGeometry,
+  onChange: _scheduleSessionSave,   // tabs are part of the resumable session
 });
 if (_settingsPanel) {
   _settingsPanel.addEventListener('input',  _variants.refresh);
@@ -6598,7 +6618,7 @@ initPersonal({
   },
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
-  variants: _variants,   // saved compare variants (js/variants.js): list(), runEach()
+  variants: _variants,   // saved variants (js/variants.js): list(), runEach()
   hasModel: () => !!currentGeometry,
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
