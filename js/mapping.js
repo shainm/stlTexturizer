@@ -347,7 +347,12 @@ export function computeUV(pos, normal, mode, settings, bounds) {
 
       const capThreshold = Math.cos((settings.capAngle ?? 20) * Math.PI / 180);
       const blendHalf = (settings.seamBandWidth ?? 0.5) * 0.5;
-      const capRaw = Math.max(0, Math.min(1, (Math.abs(normal.z) - (capThreshold - blendHalf)) / (2 * blendHalf + 1e-6)));
+      // Upper edge capped below 1 so a flat face gets full cap weight (the wall
+      // mapping is constant along each ray on a flat top and would otherwise
+      // leave straight radial lines).
+      const capLo = capThreshold - blendHalf;
+      const capHi = Math.min(capThreshold + blendHalf, 0.995);
+      const capRaw = Math.max(0, Math.min(1, (Math.abs(normal.z) - capLo) / (capHi - capLo + 1e-6)));
       const capW = capRaw * capRaw * (3 - 2 * capRaw);
       if (capW <= 0) {
         if (sideSamples.length === 1) return sideSamples[0];

@@ -254,12 +254,18 @@ const sharedGLSL = /* glsl */`
 
       float capThreshold = cos(radians(layerCapAngle[l]));
       float blendHalf = seamBandWidth * 0.5;
-      float capW = smoothstep(capThreshold - blendHalf, capThreshold + blendHalf, abs(blendN.z));
+      // Upper edge capped below 1 so a flat face gets full cap weight; the wall
+      // mapping is constant along each ray on a flat top and would otherwise
+      // leave straight radial lines. Matches mapping.js.
+      float capW = smoothstep(capThreshold - blendHalf, min(capThreshold + blendHalf, 0.995), abs(blendN.z));
       if (capW <= 0.0) return hSide;
       // Polar cap: U = angle, V = radial distance from the axis in mm, counted
       // from the pole (matches MODE_SPHERICAL_FLAT in mapping.js).
       float rho = length(rel.xy);
-      float vCap = projN.z < 0.0 ? 1.0 - rho / refV : rho / refV;
+      // Up/down from the smooth model normal, not projN: projN is rebuilt from
+      // derivatives of the displaced surface and flips sign on steep relief
+      // facets, which drew straight lines out from the centre.
+      float vCap = blendN.z < 0.0 ? 1.0 - rho / refV : rho / refV;
       float hCap;
       if (seamBand > 0.001 && seamDist < seamBand) {
         float d = u_sph < 0.5 ? u_sph : u_sph - 1.0;
