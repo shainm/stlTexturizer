@@ -20,16 +20,18 @@
  *  - With the desktop launcher's local server (launcher/serve.py):
  *      · Load Model / Load project open a native picker, so the file's real
  *        location is known;
- *      · one Export button writes, into a job folder (each item optional):
- *          Textured\<name>_<textures>.3mf|.stl
- *          Texture Settings\<name> [<textures>] <made>.bumpmesh   a VARIATION: settings
+ *      · one Export button writes, into the export (project) folder (each item optional):
+ *          Textured\<variant>\<setting changed>\<name>_<textures>.3mf|.stl|.png
+ *                                   (every model with the same settings shares a folder)
+ *          Project Settings\<name> [<textures>] <made>.bumpmesh   a VARIATION: settings
  *                                                      + selections + model
- *          Texture Settings\_shared settings.bumpmesh  settings for every model here
- *          Original\<original file>                    copied or moved there
+ *          Project Settings\<variant>\<setting changed>\<stem>.bumpmesh   one per run
+ *          Project Settings\_shared settings.bumpmesh  settings for every model here
+ *          Originals\<original file>                   copied or moved there
  *        Saving a loaded variation with changed settings/selections writes a
  *        new variation (named by its textures and when it was first made);
  *        unchanged, it refreshes the loaded one. A textured file with the same
- *        name is archived into Archive\<name> <last edit time>\ before replacing;
+ *        name is archived into Archive\<time the files were made>\ (same layout) before replacing;
  *      · opening a model from a job folder offers its saved variation (a
  *        dropdown, newest first, when there are several), else the folder's
  *        shared settings;
@@ -102,11 +104,13 @@ const stem = (n) => n.replace(/\.[^.]+$/, '');
 const safe = (s) => String(s).replace(/\.(png|jpe?g|webp|bmp|gif|tiff?)$/i, '')
   .replace(/[<>:"/\\|?*\x00-\x1f\s-]+/g, '_').replace(/^_|_$/g, '')
   .replace(/(^|_)(\p{L})/gu, (_, p, c) => p + c.toUpperCase()) || 'Texture';
-/** The model's own folder inside the export folder: the same capitalised name, with spaces (not nested again when the export folder already is it). */
-const jobDir = (name) => (safe(basename(state.dest)) === safe(name) ? state.dest : join(state.dest, safe(name).replace(/_/g, ' ')));
-const SUB = { textured: 'Textured', project: 'Texture Settings', original: 'Original', archive: 'Archive' };
-// Earlier exports named the settings folder "project files"; still read from it.
-const LEGACY_PROJECT = 'project files';
+// The export folder is the project: Textured (everything to print, by settings), Project Settings
+// (what's needed to come back to it), Originals, and Archive (replaced files, in this same layout,
+// in a folder named by when they were made).
+const SUB = { textured: 'Textured', project: 'Project Settings', original: 'Originals', archive: 'Archive' };
+// Earlier exports used other names (and a folder per model); still read from them.
+const LEGACY_PROJECTS = ['project files', 'Texture Settings'];
+const LEGACY_ORIGINAL = 'Original';
 
 function stamp(ms) {
   const d = new Date(ms), z = (n) => String(n).padStart(2, '0');
@@ -136,7 +140,7 @@ const variationFile = (name, textures, ms) => `${safe(name)} [${textures}] ${sta
 /** The model's variations in the job folder, newest first. */
 async function listVariations(name) {
   const out = [];
-  for (const sub of [SUB.project, LEGACY_PROJECT]) {
+  for (const sub of [SUB.project, ...LEGACY_PROJECTS]) {
     let items = [];
     try { items = (await call('list', { dir: join(state.dest, sub) })).items; } catch { continue; }
     for (const it of items) {
@@ -201,10 +205,10 @@ const state = {
   variantReady: null,
 };
 
-/** A model/project opened from <dest>\Original\ or <dest>\Texture Settings\ belongs to <dest>. */
+/** A model/project opened from <dest>\Originals\ or <dest>\Project Settings\ belongs to <dest>. */
 function adoptLocation(path) {
   const dir = dirname(path), up = basename(dir).toLowerCase();
-  const job = [SUB.original, SUB.project, LEGACY_PROJECT].some(n => n.toLowerCase() === up);
+  const job = [SUB.original, LEGACY_ORIGINAL, SUB.project, ...LEGACY_PROJECTS].some(n => n.toLowerCase() === up);
   state.dest = job ? dirname(dir) : dir;
 }
 
@@ -853,8 +857,10 @@ async function projectLocated(app, path, bytes) {
   const [ps] = await stat([path]);
   rememberVariation(app, path, parseVariation(state.name, basename(path))?.created ?? (ps?.mtime || Date.now() / 1000) * 1000);
   if (info?.originalFile) {
-    const cand = join(state.dest, SUB.original, info.originalFile);
-    if ((await exists(cand)).exists) state.originalPath = cand;
+    for (const sub of [SUB.original, LEGACY_ORIGINAL]) {
+      const cand = join(state.dest, sub, info.originalFile);
+      if ((await exists(cand)).exists) { state.originalPath = cand; break; }
+    }
   }
   await restoreAlign(app, info, true);
 }
@@ -876,8 +882,8 @@ async function modelLocated(app, path) {
 
   // Recognise the job folder: this model's variations, else shared settings.
   const pick = async (file) => {
-    const [n, l] = await stat([join(state.dest, SUB.project, file), join(state.dest, LEGACY_PROJECT, file)]);
-    return n.exists ? n : l;
+    const found = await stat([join(state.dest, SUB.project, file), ...LEGACY_PROJECTS.map(d => join(state.dest, d, file))]);
+    return found.find(f => f.exists) || found[0];
   };
   const vars = await listVariations(state.name), s = await pick(SHARED_FILE);
   const shared = s.path;
@@ -1000,6 +1006,7 @@ function exportStems(variants, vary, name, tl) {
   return vlist.flatMap((v, i) => values.map(value => ({
     variantId: v ? v.id : undefined,
     value,
+    img: base[i],   // the variation's preview image: no setting value in its name
     stem: value == null ? base[i] : `${base[i]}_${VARY[vary.key].tag}${varyNum(vary.key, value)}`,
     // Each variant / varied value gets its own folder under Textured, e.g. "Textured\Bricks\Smooth 5\".
     dir: join(v ? base[i].slice(name.length + 1).replace(/_/g, ' ') : '',
@@ -1014,14 +1021,13 @@ function setVary(key, value) {
 
 async function exportDialog(app) {
   if (!app.canExport()) { await notice('Export', 'Load a model and pick a texture first (or wait for the current export to finish).'); return; }
-  if (!state.name) state.name = app.modelName();
+  state.name = app.modelName();   // renamed on the model tab at the bottom left
   await state.variantReady;
   const fpNow = await fingerprint(app);
   // A loaded variation saved unchanged is refreshed; anything else is a new variation.
   const projectFile = (name) => (state.variant && state.variant.fp === fpNow && parseVariation(name, basename(state.variant.path)))
     ? basename(state.variant.path) : variationFile(name, textureLabel(app), Date.now());
 
-  const nameIn = el('input', { type: 'text', value: state.name });
   const destBox = el('span', { class: 'path', title: state.dest || '' }, state.dest || 'No folder chosen');
   const pickDest = async () => {
     const { path } = await call('pick-folder', { title: 'Choose the export folder', initial: state.dest || (state.originalPath && dirname(state.originalPath)) });
@@ -1045,7 +1051,7 @@ async function exportDialog(app) {
   const item = (box, label, ...rest) => el('div', { class: 'item' }, el('label', {}, box, ' ' + label), ...rest);
   const rows = {
     model: item(doModel, 'Textured model', fmtBox),
-    img: item(doImg, 'Iso preview image (PNG) beside each model'),
+    img: item(doImg, 'Iso preview image (PNG) per variation, in Textured\\'),
     bake: item(doBake, 'Bake the preview colours into 3MF files (and a thumbnail for the file manager)'),
     proj: item(doProj, state.variant && state.variant.fp && state.variant.fp !== fpNow ? 'Project (changed: saved as a new variation)' : 'Project (settings + selections)'),
     shared: item(doShared, 'Shared settings for this folder'),
@@ -1081,8 +1087,7 @@ async function exportDialog(app) {
   const where = el('div', { class: 'muted' });
   const fmtNow = () => fmtBox.querySelector('input:checked').value;
   function refresh() {
-    const n = safe(nameIn.value.trim() || app.modelName() || 'model');
-    const jd = state.dest ? jobDir(n).slice(state.dest.length + 1) : n; // '' when the export folder is already the model's
+    const n = safe(app.modelName() || 'model');
     rows.model.classList.toggle('off', !doModel.checked);
     rows.img.classList.toggle('off', !doModel.checked);
     rows.bake.classList.toggle('off', !doModel.checked || fmtNow() !== '3mf');
@@ -1097,16 +1102,17 @@ async function exportDialog(app) {
     // The loaded model uses the Name field, the others their own names.
     const exporting = !doModel.checked ? [] : ms.length > 1 || (ms.length && ms[0].id !== startId)
       ? ms.map(m => ({ name: m.id === startId ? n : safe(m.name) })) : [{ name: n }];
-    const modelLines = exporting.flatMap(({ name }) => {
-      const dir = state.dest ? jobDir(name).slice(state.dest.length + 1) : name;
-      // Each run's model sits in its own folder under Textured, with the project that made it.
-      return exportStems(vs, varyOpt, name, textureLabel(app)).flatMap(s => {
-        const d = `${dir ? dir + '\\' : ''}${SUB.textured}\\${s.dir ? s.dir + '\\' : ''}`;
-        const up = d.replace(/[^\\]+\\$/, '');   // the run's folder is one level down from its .bumpmesh
-        return [`${d}${s.stem}.${fmtNow()}`, doImg.checked && `${d}${s.stem}.png`, doProj.checked && s.dir && `${up}${s.stem}.bumpmesh`].filter(Boolean);
+    // Listed in export order: each value of the varied setting, then each variant, then each model.
+    const vIndex = (s) => (s.variantId === undefined ? 0 : vs.findIndex(v => v.id === s.variantId));
+    const valIndex = (s) => (varyOpt ? varyOpt.values.indexOf(s.value) : 0);
+    const modelLines = exporting.flatMap(({ name }, mi) => exportStems(vs, varyOpt, name, textureLabel(app))
+      .map(s => ({ s, key: [valIndex(s), vIndex(s), mi] }))).sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2])
+      .flatMap(({ s }) => {
+        const d = `${SUB.textured}\\${s.dir ? s.dir + '\\' : ''}`;
+        // Each run's project mirrors its Textured folder under Project Settings.
+        return [`${d}${s.stem}.${fmtNow()}`, doImg.checked && valIndex(s) === 0 && `${SUB.textured}\\${s.img}.png`,
+          doProj.checked && s.dir && `${SUB.project}\\${s.dir}\\${s.stem}.bumpmesh`].filter(Boolean);
       });
-    });
-    const pre = jd ? jd + '\\' : '';
     // Models × variants × values multiply the files; say so before it happens.
     const factors = [exporting.length > 1 && ['models', exporting.length], vs.length && ['variants', vs.length], vv && vv.length && ['values', vv.length]].filter(Boolean);
     warn.textContent = factors.length > 1
@@ -1116,7 +1122,7 @@ async function exportDialog(app) {
       ...modelLines,
       doProj.checked && `${SUB.project}\\${projectFile(n)}`,
       doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
-      doOrig.checked && state.originalPath && `${pre}${SUB.original}\\${basename(state.originalPath)}`,
+      doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
     // Show the paths as a collapsible folder tree, every file listed once under its folders.
     const root = new Map();
@@ -1132,20 +1138,32 @@ async function exportDialog(app) {
     });
     where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('div', {}, build(root, '', 0)));
   }
-  for (const x of [nameIn, doModel, doImg, doBake, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
+  for (const x of [doModel, doImg, doBake, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
   fmtBox.addEventListener('change', refresh);
   refresh();
 
+  // The sidebar's Export card is gone: its mesh settings (resolution, triangle limit, ...) live here
+  // while the popup is open, and go back to the (hidden) card afterwards.
+  const mesh = document.getElementById('export-settings');
+  const meshHome = mesh && mesh.parentNode;
+  const meshHost = el('div', { class: 'pds-mesh' });
+  const meshBack = () => { if (mesh && meshHome) meshHome.append(mesh); };
   const body = el('div', {},
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Folder'), destBox, el('button', { class: 'pds-btn', onclick: pickDest }, 'Browse…')),
-    el('div', { class: 'row' }, el('label', { class: 'k' }, 'Name'), nameIn),
     el('hr'),
+    mesh ? el('div', { class: 'muted' }, 'Mesh') : null, meshHost,
+    mesh ? el('hr') : null,
     rows.model, rows.img, rows.bake, ...modelRows, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
     el('hr'),
     where);
 
+  try {
   for (;;) {
-    const go = await modal('Export', body, [{ label: 'Cancel', value: null }, { label: 'Export', value: 'go', primary: true }]);
+    if (mesh) meshHost.append(mesh);
+    const go = await modal('Export', body, [
+      { label: 'Preview export', value: 'preview' }, { label: 'Cancel', value: null }, { label: 'Export', value: 'go', primary: true }]);
+    meshBack();
+    if (go === 'preview') { document.getElementById('preview-export-btn')?.click(); return; }
     if (!go) return;
     const opts = {
       format: doModel.checked ? fmtNow() : null,
@@ -1180,31 +1198,33 @@ async function exportDialog(app) {
     app.setBakeColors(doBake.checked);
     lsSet('do-vary', doVary.checked ? '1' : '0'); lsSet('vary-key', varyKey.value); lsSet('vary-values-' + varyKey.value, varyText.value);
     if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
-    state.name = nameIn.value.trim() || app.modelName();
-    const others = picked.filter(m => m.id !== startId);
-    if (!others.length) {
-      // The loaded model only (ticked, or none ticked), unless another single one is chosen below.
-      await runExport(app, opts, fpNow);
-      return;
-    }
-    // Other models of the project: each is loaded in turn and exported under its own name
-    // (textured files only), then the loaded model again with the project / shared / original.
+    state.name = app.modelName();
+    // Overall progress bar when more than one model file is written.
+    app.batch.start(opts.format ? Math.max(1, picked.length) * Math.max(1, opts.variants.length) * Math.max(1, opts.vary ? opts.vary.values.length : 1) : 0);
+    try {
+    // One set at a time: each value of the varied setting in turn; inside it each variant in tab
+    // order; inside that each model in tab order. A set is finished before the next one starts.
     const mine = state.name, sink = [];
+    const targets = picked.length ? picked : [null];   // null = the loaded model
+    const values = opts.vary ? opts.vary.values : [null];
+    const variantList = opts.variants.length ? opts.variants : [null];
     let ok = true;
     try {
-      for (const m of others) {
-        if (!(ok = await app.models.swapTo(m.id))) break;
-        state.name = m.name;
-        if (!(ok = await runExport(app, { ...opts, project: false, shared: false, originalMode: 'none' }, fpNow, sink))) break;
+      if (opts.format) {
+        sets: for (const value of values) for (const v of variantList) for (const m of targets) {
+          if (m && !(ok = await app.models.swapTo(m.id))) break sets;
+          state.name = m ? m.name : mine;
+          const only = { variantId: v ? v.id : undefined, value };
+          if (!(ok = await runExport(app, { ...opts, shared: false, originalMode: 'none', noMain: true, only }, fpNow, sink))) break sets;
+        }
       }
     } finally {
       state.name = mine;
-      await app.models.swapTo(startId);
+      if (picked.length) await app.models.swapTo(startId);
     }
-    if (ok) {
-      const withMine = picked.some(m => m.id === startId);
-      await runExport(app, withMine ? opts : { ...opts, format: null }, fpNow, sink);
-    }
+    // Then, for the loaded model, the project / shared settings / original.
+    if (ok) await runExport(app, { ...opts, format: null }, fpNow, sink);
+    app.batch.end();
     if (sink.length) {
       app.showSponsorOverlay();
       const done = await modal('Exported', el('div', {},
@@ -1214,20 +1234,25 @@ async function exportDialog(app) {
       if (done === 'open') await call('open-folder', { path: state.dest });
     }
     return;
+    } finally { app.batch.end(); }
   }
+  } finally { meshBack(); }
 }
 
 /**
- * Bring a job folder from before the rename up to date: "project files" →
- * "Texture Settings", "textured" → "Textured" (a case-only rename goes
- * through a temporary name; Windows paths ignore case).
+ * Bring a project folder from before the renames up to date: "project files" /
+ * "Texture Settings" → "Project Settings", "Original" → "Originals", "textured" →
+ * "Textured" (a case-only rename goes through a temporary name; Windows paths
+ * ignore case).
  */
 async function migrateFolders(dest) {
   const names = (await call('list', { dir: dest })).items.filter(i => i.isDir).map(i => i.name);
-  if (names.includes(LEGACY_PROJECT) && !names.some(n => n.toLowerCase() === SUB.project.toLowerCase())) {
-    await call('move', { src: join(dest, LEGACY_PROJECT), dst: join(dest, SUB.project) });
+  const has = (t) => names.some(n => n.toLowerCase() === t.toLowerCase());
+  for (const [old, target] of [...LEGACY_PROJECTS.map(o => [o, SUB.project]), [LEGACY_ORIGINAL, SUB.original]]) {
+    const cur = names.find(n => n === old);
+    if (cur && !has(target)) await call('move', { src: join(dest, cur), dst: join(dest, target) });
   }
-  for (const target of [SUB.textured, SUB.original]) {
+  for (const target of [SUB.textured, SUB.original, SUB.project]) {
     const cur = names.find(n => n.toLowerCase() === target.toLowerCase());
     if (cur && cur !== target) {
       const tmp = join(dest, `${target}.renaming`);
@@ -1238,19 +1263,27 @@ async function migrateFolders(dest) {
 }
 
 /** Writes one model's export; false = cancelled or failed. With `sink` (an array) the written paths are added to it and no summary is shown. */
-async function runExport(app, { format, project, shared, originalMode, vary, variants = [], image = false }, fp, sink = null) {
-  const job = jobDir(state.name);
-  try { await migrateFolders(job); } catch {} // a new model folder has nothing to migrate
+async function runExport(app, { format, project, shared, originalMode, vary, variants = [], image = false, only = null, noMain = false }, fp, sink = null) {
+  try { await migrateFolders(state.dest); } catch {} // a new folder has nothing to migrate
   const name = safe(state.name), tl = textureLabel(app);
-  const texturedDir = join(job, SUB.textured);
+  // Textured files of every model go under one project-level folder, grouped by settings.
+  const texturedDir = join(state.dest, SUB.textured);
+  const rel = (p) => p.slice(state.dest.length + 1);
   // One model file, or one per ticked variant and/or per value of the setting being varied.
-  const runs = !format ? [] : exportStems(variants, vary, name, tl).map(s => ({ variantId: s.variantId, value: s.value, target: join(texturedDir, s.dir, `${s.stem}.${format}`), dir: s.dir }));
+  // `only` ({ variantId, value }) narrows it to one of those (named as in the full set); `noMain`
+  // leaves out the model's own project file (written once, after all the sets).
+  let runs = !format ? [] : exportStems(variants, vary, name, tl).map(s => ({ variantId: s.variantId, value: s.value, target: join(texturedDir, s.dir, `${s.stem}.${format}`), dir: s.dir, img: s.img }));
+  if (only) {
+    runs = runs.filter(r => r.variantId === only.variantId && r.value === only.value);
+    variants = variants.filter(v => v.id === only.variantId);
+  }
+  const writeMain = project && !noMain;
   // Project = a variation: the loaded one refreshed when nothing changed, else a new one.
   const cur = state.variant;
   const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
   let projectPath = null, created = Date.now();
-  if (project && refresh) { projectPath = join(state.dest, SUB.project, basename(cur.path)); created = cur.created; }
-  else if (project) {
+  if (writeMain && refresh) { projectPath = join(state.dest, SUB.project, basename(cur.path)); created = cur.created; }
+  else if (writeMain) {
     const base = variationFile(name, tl, created).replace(/\.bumpmesh$/, '');
     projectPath = join(state.dest, SUB.project, `${base}.bumpmesh`);
     // Two variations in the same minute must not collide.
@@ -1258,7 +1291,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   }
   const sharedPath = join(state.dest, SUB.project, SHARED_FILE);
   const origName = state.originalPath ? basename(state.originalPath) : null;
-  const origTarget = origName ? join(job, SUB.original, origName) : null;
+  const origTarget = origName ? join(state.dest, SUB.original, origName) : null;
   const origAlreadyThere = !!(origTarget && state.originalPath.toLowerCase() === origTarget.toLowerCase());
   const doOrig = originalMode !== 'none' && origTarget && !origAlreadyThere;
 
@@ -1273,14 +1306,14 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
     const ok = await modal(`"${name}" already exists here`,
       el('div', {},
         el('p', {}, `Last edited ${new Date(when).toLocaleString()}. Archive the old files and replace them?`),
-        el('ul', {}, old.map(o => el('li', {}, o.path.slice(job.length + 1)))),
-        el('p', { class: 'muted' }, `They'll be moved to ${SUB.archive}\\${name} ${stamp(when)}\\`)),
+        el('ul', {}, old.map(o => el('li', {}, rel(o.path)))),
+        el('p', { class: 'muted' }, `They'll be moved to ${SUB.archive}\\${stamp(when)}\\, keeping their folders.`)),
       [{ label: 'Cancel', value: null }, { label: 'Archive and replace', value: 1, primary: true }]);
     if (!ok) return false;
-    // Unique folder: two archives in the same minute must not collide.
-    let archiveDir = join(job, SUB.archive, `${name} ${stamp(when)}`);
-    for (let k = 2; (await exists(archiveDir)).exists; k++) archiveDir = join(job, SUB.archive, `${name} ${stamp(when)} (${k})`);
-    for (const o of old) await call('move', { src: o.path, dst: join(archiveDir, o.path.slice(job.length + 1)) });
+    // Named by when the files were made; two in the same minute must not collide.
+    let archiveDir = join(state.dest, SUB.archive, stamp(when));
+    for (let k = 2; (await exists(archiveDir)).exists; k++) archiveDir = join(state.dest, SUB.archive, `${stamp(when)} (${k})`);
+    for (const o of old) await call('move', { src: o.path, dst: join(archiveDir, rel(o.path)) });
   }
 
   const written = [];
@@ -1294,17 +1327,20 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       try { await app.handleExport([format]); }
       finally { setDownloadSink(null); }
       if (caught.length !== 1) { // failed or cancelled (main.js already said why)
-        if (written.length) await notice('Export stopped', `Only ${written.length} of ${runs.length} versions were written.`);
+        if (written.length && !app.batch.cancelled()) await notice('Export stopped', `Only ${written.length} of ${runs.length} versions were written.`);
         return false;
       }
       await writeFile(r.target, caught[0].blob);
       written.push(r.target);
-      // Iso preview of this file, named like it, so the parts can be seen without opening them.
-      if (image) {
+      app.batch.next();
+      if (app.batch.cancelled()) return false;
+      // One iso preview per variation (not per setting value), all together in Textured\ so the
+      // parts can be browsed in one place without opening them.
+      if (image && (!vary || r.value === vary.values[0])) {
         await new Promise(res => setTimeout(res, 100));   // preview settled (no rAF: it stalls in a background tab)
         const png = await captureIsoImage(768);
         if (png) {
-          const p = r.target.replace(/\.[^.\\]+$/, '.png');
+          const p = join(texturedDir, `${r.img}.png`);
           await writeFile(p, png);
           written.push(p);
         }
@@ -1312,7 +1348,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       // Alongside it, the project with the settings that made it (a folder per run only).
       if (project && r.dir) {
         const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align: state.align ? { ...state.align } : null } });
-        const p = r.target.replace(/\\[^\\]+\\([^\\]+)\.[^.\\]+$/, '\\$1.bumpmesh');   // one level up, beside the run's folder
+        const p = join(state.dest, SUB.project, r.dir, `${basename(r.target).replace(/\.[^.]+$/, '')}.bumpmesh`);   // mirrors its Textured folder
         await writeFile(p, new Blob([zip]));
         written.push(p);
       }
@@ -1324,6 +1360,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       const before = slider && slider.value;
       try {
         for (const r of rs) {
+          if (app.batch.cancelled()) return false;
           if (vary) setVary(vary.key, r.value);
           if (!(await exportRun(r))) return false;
         }
@@ -1350,7 +1387,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
     ? { mode: 'modular', xy: align.xy, rotate: align.rotate, positions: align.positions }
     : { mode: 'assembly', assembly: align.assembly };
   // ── Project (settings, selections, model, custom textures). ──
-  if (project) {
+  if (writeMain) {
     const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align } });
     await writeFile(projectPath, new Blob([zip]));
     written.push(projectPath);
@@ -1371,11 +1408,12 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   }
 
   if (sink) { sink.push(...written); return true; }
+  app.batch.end();
   const done = await modal('Exported', el('div', {},
-    el('p', {}, `Saved to ${job}`),
-    el('ul', {}, written.map(p => el('li', {}, p.slice(job.length + 1))))),
+    el('p', {}, `Saved to ${state.dest}`),
+    el('ul', {}, written.map(p => el('li', {}, rel(p))))),
     [{ label: 'Open folder', value: 'open' }, { label: 'Done', value: null, primary: true }]);
-  if (done === 'open') await call('open-folder', { path: job });
+  if (done === 'open') await call('open-folder', { path: state.dest });
   return true;
 }
 
