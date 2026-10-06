@@ -1411,6 +1411,9 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 }
 
 .export-progress.hidden { display: none; }
+.export-batch { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.export-batch.hidden { display: none; }
+#export-batch-label { color: var(--text); font-weight: 600; }
 
 .export-progress-track {
   position: relative;

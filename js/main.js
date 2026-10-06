@@ -5159,7 +5159,7 @@ async function handleExport(format = 'stl') {
       _syncPreviewExportBtn();
       setProgress(1.0, t('progress.done'));
       exportSucceeded = true;
-      setTimeout(() => { exportProgress.classList.add('hidden'); setProgress(0, ''); }, 800);
+      setTimeout(() => { _hideExportProgress(); setProgress(0, ''); }, 800);
       return;
     }
 
@@ -5241,7 +5241,8 @@ async function handleExport(format = 'stl') {
 
     setProgress(1.0, t('progress.done'));
     setTimeout(() => {
-      exportProgress.classList.add('hidden');
+      if (isExporting) return;   // the next file of a batch has started
+      _hideExportProgress();
       setProgress(0, '');
     }, 1500);
   } catch (err) {
@@ -5257,7 +5258,7 @@ async function handleExport(format = 'stl') {
     // are disposed there; only the reconstructed output remains on this side.
     if (finalGeometry) finalGeometry.dispose();
     // Hide progress immediately on error or stale abort; success hides it after 1500 ms.
-    if (!exportSucceeded) exportProgress.classList.add('hidden');
+    if (!exportSucceeded) _hideExportProgress();
     isExporting = false;
     exportBtn.classList.remove('busy');
     export3mfBtn.classList.remove('busy');
@@ -5454,6 +5455,37 @@ function setProgress(fraction, label) {
   exportProgBar.style.width = `${pct}%`;
   exportProgPct.textContent = `${pct}%`;
   exportProgLbl.textContent = label;
+  _showBatch(fraction);
+}
+
+// Personal: several files in one export (driven by personal.js). The bar above the
+// per-file one shows files done + the current file's progress, out of the total.
+let _batch = null;   // { total, done } while a multi-file export runs
+let _exportCancelled = false;
+
+/** Stop the running export (and the rest of a batch): the stale token aborts the pipeline between stages. */
+function _cancelExport() {
+  _exportCancelled = true;
+  exportToken++;
+  exportProgLbl.textContent = 'Cancelling…';
+}
+document.getElementById('export-cancel-btn')?.addEventListener('click', _cancelExport);
+function _showBatch(fraction = 0) {
+  const box = document.getElementById('export-batch');
+  if (!box) return;
+  box.classList.toggle('hidden', !_batch);
+  if (!_batch) return;
+  const overall = Math.min(1, (_batch.done + Math.max(0, Math.min(1, fraction))) / _batch.total);
+  const pct = Math.round(overall * 100);
+  document.getElementById('export-batch-bar').style.width = `${pct}%`;
+  document.getElementById('export-batch-pct').textContent = `${pct}%`;
+  document.getElementById('export-batch-label').textContent =
+    `File ${Math.min(_batch.done + 1, _batch.total)} of ${_batch.total}`;
+}
+/** Hide the export progress, unless a multi-file export is still running. */
+function _hideExportProgress() {
+  if (_batch) return;
+  exportProgress.classList.add('hidden');
 }
 
 // ── Smooth Bottom (advanced feature) ────────────────────────────────────────
@@ -6838,8 +6870,11 @@ function _renameModel(m, nameEl) {
 
 function _renderModelBar() {
   if (_modelEditing) return;
-  _modelBar.classList.toggle('hidden', _models.items.length < 2);
+  // Always there once a model is loaded; a lone model shows just its name (no number, no remove).
+  _ensureActiveModel();
+  _modelBar.classList.toggle('hidden', !_models.items.length);
   _modelBar.textContent = '';
+  const several = _models.items.length > 1;
   _models.items.forEach((m, i) => {
     const chip = document.createElement('div');
     chip.className = 'variant-chip' + (m.id === _models.activeId ? ' active' : '');
@@ -6851,7 +6886,7 @@ function _renderModelBar() {
     num.textContent = String(i + 1);
     const name = document.createElement('span');
     name.textContent = m.name;
-    btn.append(num, name);
+    btn.append(...(several ? [num, name] : [name]));
     btn.addEventListener('dblclick', () => _renameModel(m, name));
     btn.addEventListener('click', () => _swapModel(m.id).catch(err => alert(t('alerts.loadFailed', { msg: err.message }))));
     const x = document.createElement('button');
@@ -6866,7 +6901,8 @@ function _renderModelBar() {
       _renderModelBar();
       _scheduleSessionSave();
     });
-    chip.append(btn, x);
+    chip.append(btn);
+    if (several) chip.append(x);
     _modelBar.append(chip);
   });
 }
@@ -6934,6 +6970,17 @@ initPersonal({
   setPreviewColors: (textured, untextured, texturedLow) => {
     _bakeColors = { ..._bakeColors, textured, untextured };
     setPreviewColors(textured, untextured, texturedLow); _syncPreviewMaterial();
+  },
+  // Personal: a multi-file export. start(total) shows the overall bar, next() counts a
+  // finished file, end() hides it all.
+  batch: {
+    cancelled: () => _exportCancelled,
+    start: (total) => { _exportCancelled = false; _batch = total > 1 ? { total, done: 0 } : null; _showBatch(0); },
+    next: () => { if (_batch) { _batch.done = Math.min(_batch.total, _batch.done + 1); _showBatch(0); } },
+    end: () => {
+      _batch = null; _showBatch(0);
+      if (!isExporting) exportProgress.classList.add('hidden');
+    },
   },
   // Personal: bake the preview colours (and a thumbnail) into exported 3MF files.
   setBakeColors: (on) => { _bakeColors = { ..._bakeColors, enabled: !!on }; },

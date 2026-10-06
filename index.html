@@ -249,7 +249,7 @@
         </div>
         <canvas id="viewport" role="img" aria-label="3D model preview"></canvas>
         <div id="brush-cursor"></div>
-        <div id="mesh-diagnostics" class="mesh-diagnostics hidden">
+        <div id="mesh-diagnostics" class="mesh-diagnostics panel-section hidden">
           <button id="mesh-diag-dismiss" class="mesh-diag-dismiss" aria-label="Dismiss">&times;</button>
           <div id="mesh-diag-fast" class="mesh-diag-results"></div>
           <div class="mesh-diag-advanced-row">
@@ -320,6 +320,23 @@
       <!-- The project's models to swap between (main.js, "Models of the project") -->
       <div id="model-bar" class="variant-bar hidden" role="group" aria-label="Models"></div>
       <div id="variant-bar" class="variant-bar hidden" role="group" data-i18n-aria-label="variants.bar" aria-label="Variants"></div>
+      </div>
+      <!-- Export progress floats under the view buttons now that the Export card is gone from the sidebar -->
+      <div id="export-progress" class="export-progress hidden">
+        <!-- Several files in one export: how far along the whole batch is (js/personal.js) -->
+        <div id="export-batch" class="export-batch hidden">
+          <div class="export-progress-track">
+            <div id="export-batch-bar" class="export-progress-bar"></div>
+            <span id="export-batch-pct" class="export-progress-pct"></span>
+          </div>
+          <span id="export-batch-label"></span>
+        </div>
+        <div class="export-progress-track">
+          <div id="export-progress-bar" class="export-progress-bar"></div>
+          <span id="export-progress-pct" class="export-progress-pct"></span>
+        </div>
+        <span id="export-progress-label" data-i18n="progress.processing">Processing…</span>
+        <button id="export-cancel-btn" type="button" class="export-cancel-btn" title="Stop the export (files already written stay)">Cancel export</button>
       </div>
     </section>
 
@@ -764,8 +781,11 @@
       </section>
 
       <!-- Export -->
-      <section class="panel-section">
+      <!-- PDS edition: this section is hidden; its settings (#export-settings) are shown in the
+           Export popup (js/personal.js moves them there while it is open and back afterwards). -->
+      <section id="export-section" class="panel-section" style="display:none">
         <h2 data-i18n="sections.export" data-i18n-title="tooltips.export" title="Smaller edge length = finer displacement detail. Output is then decimated to the triangle limit.">Export ⓘ</h2>
+        <div id="export-settings">
         <button id="smart-res-btn" class="smart-res-btn" disabled
                 data-i18n="labels.smartRes"
                 data-i18n-title="tooltips.smartRes"
@@ -803,14 +823,8 @@
         <div id="tri-limit-warning" class="tri-limit-warning hidden" data-i18n="warnings.safetyCapHit">
           ⚠ 16M-triangle safety cap hit during subdivision — result may still be coarser than requested edge length.
         </div>
+        </div><!-- /#export-settings -->
 
-        <div id="export-progress" class="export-progress hidden">
-          <div class="export-progress-track">
-            <div id="export-progress-bar" class="export-progress-bar"></div>
-            <span id="export-progress-pct" class="export-progress-pct"></span>
-          </div>
-          <span id="export-progress-label" data-i18n="progress.processing">Processing…</span>
-        </div>
         <div class="export-buttons">
           <button id="export-btn" class="export-btn" disabled data-i18n="ui.exportStl" data-i18n-title="tooltips.exportStl" title="Widely compatible with all slicers">Export STL</button>
           <button id="preview-export-btn" class="export-btn" disabled data-i18n="ui.previewExport" data-i18n-title="tooltips.previewExport" title="Show the exported mesh in the viewer, including steps the live preview can't show">Preview Export</button>

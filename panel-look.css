@@ -334,6 +334,33 @@ html[data-hide-hint] .viewport-controls-hint { display: none; }
   gap: 6px;
 }
 .vp-gap { width: 6px; }
+/* Export progress: floats top centre under the view buttons. */
+#viewport-section > .export-progress {
+  position: absolute;
+  top: calc(var(--gap) + 48px);
+  left: 0;
+  right: var(--view-right);
+  margin: 0 auto;
+  width: 300px;
+  max-width: calc(100% - var(--view-right) - 2 * var(--gap));
+  z-index: 7;
+  background: var(--panel-bg-plain);
+  box-shadow: var(--panel-shadow);
+}
+#viewport-section > .export-progress.hidden { display: none; }
+.export-cancel-btn {
+  display: block;
+  margin: 8px 0 0 auto;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.export-cancel-btn:hover { border-color: var(--danger); color: var(--danger); }
 /* View snap: Front / Back / ... / Iso, top centre of the visible view. */
 .view-snap {
   position: absolute;
@@ -384,7 +411,7 @@ html[data-hide-hint] .viewport-controls-hint { display: none; }
 .vp-btn.hidden { display: none; }
 /* the mesh check's checkmark: the theme's accent when the mesh is fine, amber / red otherwise */
 #mesh-diag-btn { color: var(--accent-hover); }
-#mesh-diag-btn.diag-warn { color: #f59e0b; }
+#mesh-diag-btn.diag-warn { color: var(--danger); }
 #mesh-diag-btn.diag-error { color: var(--danger); }
 #mesh-diag-btn.active { background: var(--pl-track-hot); }
 .vp-btn:hover:not(:disabled) { background: var(--pl-track-hot); }
@@ -403,12 +430,26 @@ html[data-hide-hint] .viewport-controls-hint { display: none; }
   left: auto;
   right: calc(var(--view-right) + var(--gap));
 }
-/* ...in the theme's colours when the mesh is fine (amber / red keep their meaning) */
-.mesh-diagnostics.diag-ok {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel-bg-plain));
-  border-color: var(--accent);
-  color: var(--accent-hover);
+/* ...a card like the settings and export menus; only the result text carries the severity colour */
+.mesh-diagnostics,
+.mesh-diagnostics.diag-ok,
+.mesh-diagnostics.diag-warn,
+.mesh-diagnostics.diag-error {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+  -webkit-backdrop-filter: var(--panel-blur);
+  backdrop-filter: var(--panel-blur);
+  color: var(--text);
+  padding: 12px 34px 12px 14px;
+  width: min(300px, calc(100vw - 2 * var(--gap)));
 }
+.mesh-diagnostics.diag-ok #mesh-diag-fast { color: var(--accent-hover); }
+.mesh-diagnostics.diag-warn .mesh-diag-results,
+.mesh-diagnostics.diag-error .mesh-diag-results { color: var(--danger); }
+.mesh-diagnostics .mesh-diag-dismiss { top: 8px; right: 8px; color: var(--text-muted); font-size: 18px; opacity: 1; }
+.mesh-diagnostics .mesh-diag-dismiss:hover { color: var(--text); }
 .mesh-diagnostics .mesh-diag-run-btn { color: var(--text); }
 
 /* No support banners or popups outside the settings menu. */
