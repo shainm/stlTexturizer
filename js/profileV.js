@@ -14,8 +14,8 @@
  *
  * Arc length cannot be computed from one point, so it is measured once on the
  * mesh: every vertex gets its shortest profile distance (Dijkstra, edge cost =
- * length along the face's meridian direction in the radius/height plane, so
- * travelling around the axis or sideways along a lobed wall is free) from the vertex nearest the axis at the bottom of its connected piece. The
+ * height travelled, plus radius travelled on near-flat faces, so going around
+ * the axis or sideways along a lobed wall is free) from the vertex nearest the axis at the bottom of its connected piece. The
  * values are baked into a 2D grid over (radius, height) that the CPU mapping
  * and the preview shader both sample.
  *
@@ -30,6 +30,8 @@ import { QuantizedPointMap } from './meshIndex.js';
 const MAX_DIM = 1024;
 const TARGET_CELLS = 768;       // cells along the longer of radius / height
 const FILL_WEIGHT = 1e-3;
+const FLAT_LO = 0.85;           // |normal.z| where radius starts to count
+const FLAT_HI = 0.98;           // ...and counts fully
 const BLUR_RADIUS = 2;          // cells, box blur per pass
 const BLUR_PASSES = 2;
 
@@ -111,27 +113,20 @@ export function buildProfile(geometry, center) {
   const cost = new Float32Array(start[nv]);
   for (let t = 0; t < triCount; t++) {
     const a = ids[t * 3], b = ids[t * 3 + 1], c = ids[t * 3 + 2];
-    // Meridian direction of this face in the (rho, z) plane: perpendicular to
-    // the normal's own (rho, z) part. An edge only costs its length along that
-    // direction, so on a lobed wall the sideways wobble (rho changing at a
-    // fixed height) is free and V stays height there, instead of picking up
-    // the lobe's radius change as extra distance.
+    // Cost = height travelled, plus radius travelled only on near-flat faces.
+    // True arc length makes a lobe's slanted flank longer than the wall beside
+    // it, so lines of constant V bend up over every lobe and a rotated texture
+    // wiggles. Height alone keeps them level on walls and slants (a lobe's
+    // sideways radius change is free); radius counts only where the face is
+    // flat enough that height says nothing (brims, tops, bottoms), and the
+    // fade between the two keeps V continuous where a wall flows into a cap.
     const e1x = xArr[b] - xArr[a], e1y = yArr[b] - yArr[a], e1z = zArr[b] - zArr[a];
     const e2x = xArr[c] - xArr[a], e2y = yArr[c] - yArr[a], e2z = zArr[c] - zArr[a];
-    let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nzv = e1x * e2y - e1y * e2x;
-    const nl = Math.hypot(nx, ny, nzv) || 1;
-    nx /= nl; ny /= nl; nzv /= nl;
-    const cx = (xArr[a] + xArr[b] + xArr[c]) / 3, cy = (yArr[a] + yArr[b] + yArr[c]) / 3;
-    const cl = Math.hypot(cx, cy);
-    const nRho = cl > 1e-9 ? (nx * cx + ny * cy) / cl : 0;
-    const m = Math.hypot(nRho, nzv);
-    // Face edge-on to the meridian plane (normal mostly sideways): no usable
-    // direction, fall back to the plain length in the plane.
-    const tRho = m > 0.2 ? -nzv / m : 0, tZ = m > 0.2 ? nRho / m : 0;
-    const w = (p, q) => {
-      const dr = rhoArr[q] - rhoArr[p], dz = zArr[q] - zArr[p];
-      return m > 0.2 ? Math.abs(dr * tRho + dz * tZ) : Math.hypot(dr, dz);
-    };
+    const nzv = (e1x * e2y - e1y * e2x) /
+      (Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x) || 1);
+    const hRaw = Math.min(1, Math.max(0, (Math.abs(nzv) - FLAT_LO) / (FLAT_HI - FLAT_LO)));
+    const h = hRaw * hRaw * (3 - 2 * hRaw);
+    const w = (p, q) => Math.abs(zArr[q] - zArr[p]) + h * Math.abs(rhoArr[q] - rhoArr[p]);
     let k;
     k = fillPos[a]++; adj[k] = b; cost[k] = w(a, b);
     k = fillPos[a]++; adj[k] = c; cost[k] = w(a, c);
