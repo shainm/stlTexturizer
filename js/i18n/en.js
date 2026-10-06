@@ -32,7 +32,7 @@ export default {
   "ui.sectionZTitle": "Cut perpendicular to the Z axis",
   "ui.sectionFlip": "Flip",
   "ui.sectionFlipTitle": "Show the other half",
-  "variants.bar": "Compare variants",
+  "variants.bar": "Variants",
   "variants.add": "Save the current settings as a new variant",
   "variants.remove": "Remove this variant",
   "variants.restoreTip": "Click to switch to these settings",

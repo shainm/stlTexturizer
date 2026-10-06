@@ -177,7 +177,7 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
 #viewport-bottom > * { pointer-events: auto; }
 #viewport-bottom > .hidden { display: none; }
 
-/* Compare variants: chips beside the bar, "+" saves the current settings. */
+/* Variants: chips beside the bar, "+" saves the current settings. */
 .variant-bar {
   display: flex;
   align-items: center;

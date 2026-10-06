@@ -932,7 +932,7 @@ function textureLabel(app) {
   return names.length ? names.join('+') : 'textured';
 }
 
-// ── Several versions of one export ──────────────────────────────────────────
+// ── Vary Setting: several versions of one export ──────────────────────────────────────────
 // One setting is stepped through a list of values, one model file per value
 // ("<name>_<textures>_smooth5.stl"), e.g. to compare print times. The sliders
 // are driven like a click, so every handler runs exactly as for a user drag.
@@ -950,7 +950,7 @@ function parseVaryValues(text, key) {
   const snap = (v) => (step > 0 ? +(lo + Math.round((v - lo) / step) * step).toFixed(6) : v);
   return [...new Set(String(text).split(/[\s,;]+/).map(parseFloat).filter(Number.isFinite).map(v => snap(Math.min(hi, Math.max(lo, v)))))].slice(0, 12);
 }
-/** File names (no extension) for the ticked compare variants: "<name>_<variant name>", numbered when two share a name. */
+/** File names (no extension) for the ticked variants: "<name>_<variant name>", numbered when two share a name. */
 function variantStems(vs, name) {
   const seen = new Map();
   return vs.map((v) => {
@@ -959,6 +959,21 @@ function variantStems(vs, name) {
     seen.set(s, c);
     return c > 1 ? `${s}_${c}` : s;
   });
+}
+/**
+ * File names (no extension) of the model files an export writes, one per ticked variant × value of the
+ * varied setting (either may be absent): [{ variantId, value, stem }]. Variants alone are
+ * "<name>_<variant>", values alone "<name>_<textures>_<tag><value>", both "<name>_<variant>_<tag><value>".
+ */
+function exportStems(variants, vary, name, tl) {
+  const base = variants.length ? variantStems(variants, name) : [`${name}_${tl}`];
+  const vlist = variants.length ? variants : [null];
+  const values = vary ? vary.values : [null];
+  return vlist.flatMap((v, i) => values.map(value => ({
+    variantId: v ? v.id : undefined,
+    value,
+    stem: value == null ? base[i] : `${base[i]}_${VARY[vary.key].tag}${varyNum(vary.key, value)}`,
+  })));
 }
 function setVary(key, value) {
   const s = document.getElementById(VARY[key].slider);
@@ -1003,21 +1018,22 @@ async function exportDialog(app) {
     orig: item(doOrig, 'Original model', origModes),
   };
   const origPathRow = el('div', { class: 'item sub' }, origBox, el('button', { class: 'pds-btn', onclick: pickOrig }, 'Locate…'));
-  // Several versions: one setting stepped through a list of values.
+  // Vary Setting: one setting stepped through a list of values.
   const doVary = chk('do-vary', '0');
   const varyKey = el('select', {}, Object.entries(VARY).map(([k, v]) => el('option', { value: k, selected: k === (VARY[lsGet('vary-key', '')] ? lsGet('vary-key', '') : 'smoothing') }, v.label)));
   const varyText = el('input', { type: 'text', value: lsGet('vary-values-' + varyKey.value, VARY[varyKey.value].dflt), size: 14, title: 'Values separated by commas, e.g. 0, 4, 8' });
   const varyRow = el('div', { class: 'item sub' }, varyKey, ' ', varyText);
-  // Compare variants (the chips beside the bottom bar): one model file per ticked variant.
+  // Variants (the chips beside the bottom bar): one model file per ticked variant.
   const vlist = app.variants ? app.variants.list() : [];
   const vchks = vlist.map(v => ({ v, box: el('input', { type: 'checkbox', checked: true }) }));
   const variantsNow = () => (doModel.checked ? vchks.filter(x => x.box.checked).map(x => x.v) : []);
   const variantRows = vlist.length ? [
-    el('div', { class: 'item sub muted' }, 'Compare variants (none ticked = the current settings):'),
+    el('div', { class: 'item sub muted' }, 'Variants (none ticked = the current settings):'),
     ...vchks.map(({ v, box }) => el('div', { class: 'item sub' }, el('label', {}, box, ` ${v.num} · ${v.label}`))),
   ] : [];
-  const varyNow = () => (doVary.checked && doModel.checked && !variantsNow().length ? parseVaryValues(varyText.value, varyKey.value) : null);
-  rows.vary = item(doVary, 'Several versions (vary one setting)');
+  const varyNow = () => (doVary.checked && doModel.checked ? parseVaryValues(varyText.value, varyKey.value) : null);
+  rows.vary = item(doVary, 'Vary Setting');
+  const warn = el('div', { class: 'item sub' });
   varyKey.addEventListener('change', () => { varyText.value = lsGet('vary-values-' + varyKey.value, VARY[varyKey.value].dflt); refresh(); });
   const where = el('div', { class: 'muted' });
   const fmtNow = () => fmtBox.querySelector('input:checked').value;
@@ -1027,15 +1043,15 @@ async function exportDialog(app) {
     rows.orig.classList.toggle('off', !doOrig.checked);
     origPathRow.classList.toggle('off', !doOrig.checked);
     const vs = variantsNow();
-    doVary.disabled = vs.length > 0;   // a variant picks its own settings; varying one setting on top would multiply files
-    doVary.title = vs.length ? 'Untick the compare variants to vary one setting instead' : '';
-    rows.vary.classList.toggle('off', !doModel.checked || vs.length > 0);
-    varyRow.classList.toggle('off', !doVary.checked || !doModel.checked || vs.length > 0);
+    rows.vary.classList.toggle('off', !doModel.checked);
+    varyRow.classList.toggle('off', !doVary.checked || !doModel.checked);
     const vv = varyNow();
-    const stems = variantStems(vs, n);
-    const modelLines = !doModel.checked ? [] : vs.length ? stems.map(s => `${SUB.textured}\\${s}.${fmtNow()}`) : vv && vv.length
-      ? vv.map(v => `${SUB.textured}\\${n}_${textureLabel(app)}_${VARY[varyKey.value].tag}${varyNum(varyKey.value, v)}.${fmtNow()}`)
-      : [`${SUB.textured}\\${n}_${textureLabel(app)}.${fmtNow()}`];
+    const stems = doModel.checked ? exportStems(vs, vv && vv.length ? { key: varyKey.value, values: vv } : null, n, textureLabel(app)) : [];
+    const modelLines = stems.map(s => `${SUB.textured}\\${s.stem}.${fmtNow()}`);
+    // Variants × values multiply the files; say so before it happens.
+    warn.textContent = vs.length && vv && vv.length
+      ? `Variants and Vary Setting together: ${vs.length} × ${vv.length} = ${stems.length} model files.` : '';
+    warn.classList.toggle('hidden', !warn.textContent);
     const lines = [
       ...modelLines,
       doProj.checked && `${SUB.project}\\${projectFile(n)}`,
@@ -1052,7 +1068,7 @@ async function exportDialog(app) {
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Folder'), destBox, el('button', { class: 'pds-btn', onclick: pickDest }, 'Browse…')),
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Name'), nameIn),
     el('hr'),
-    rows.model, ...variantRows, rows.vary, varyRow, rows.proj, rows.shared, rows.orig, origPathRow,
+    rows.model, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
     el('hr'),
     where);
 
@@ -1070,11 +1086,17 @@ async function exportDialog(app) {
     const vv = varyNow();
     if (vv && vv.length) opts.vary = { key: varyKey.value, values: vv };
     let problem = null;
-    if (doVary.checked && doModel.checked && !opts.variants.length && !vv.length) problem = 'Enter at least one value for the setting to vary (e.g. 0, 4, 8).';
+    if (doVary.checked && doModel.checked && !vv.length) problem = 'Enter at least one value for the setting to vary (e.g. 0, 4, 8).';
     else if (!state.dest) problem = 'Choose a folder to export into.';
     else if (!opts.format && !opts.project && !opts.shared && opts.originalMode === 'none') problem = 'Tick at least one thing to export.';
     else if (opts.originalMode !== 'none' && !state.originalPath) problem = 'The original model\'s location is unknown — use Locate…, or untick "Original model".';
     if (problem) { await notice('Export', problem); continue; }
+    if (opts.variants.length && opts.vary) {
+      const count = opts.variants.length * opts.vary.values.length;
+      const ok = await modal('Many files', el('p', {}, `${opts.variants.length} variants × ${opts.vary.values.length} values of "${VARY[opts.vary.key].label}" will export ${count} model files, and every one is a full texturing run. Continue?`),
+        [{ label: 'Back', value: null }, { label: `Export ${count} files`, value: 1, primary: true }]);
+      if (!ok) continue;
+    }
     lsSet('dest', state.dest);
     lsSet('do-model', doModel.checked ? '1' : '0'); lsSet('do-proj', doProj.checked ? '1' : '0');
     lsSet('do-shared', doShared.checked ? '1' : '0'); lsSet('do-orig', doOrig.checked ? '1' : '0');
@@ -1111,12 +1133,8 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   await migrateFolders(state.dest);
   const name = safe(state.name), tl = textureLabel(app);
   const texturedDir = join(state.dest, SUB.textured);
-  // One model file, one per ticked compare variant, or one per value of the setting being varied.
-  const stems = variantStems(variants, name);
-  const runs = !format ? []
-    : variants.length ? variants.map((v, i) => ({ variantId: v.id, target: join(texturedDir, `${stems[i]}.${format}`) }))
-    : vary ? vary.values.map(value => ({ value, target: join(texturedDir, `${name}_${tl}_${VARY[vary.key].tag}${varyNum(vary.key, value)}.${format}`) }))
-      : [{ value: null, target: join(texturedDir, `${name}_${tl}.${format}`) }];
+  // One model file, or one per ticked variant and/or per value of the setting being varied.
+  const runs = !format ? [] : exportStems(variants, vary, name, tl).map(s => ({ variantId: s.variantId, value: s.value, target: join(texturedDir, `${s.stem}.${format}`) }));
   // Project = a variation: the loaded one refreshed when nothing changed, else a new one.
   const cur = state.variant;
   const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
@@ -1158,10 +1176,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   const written = [];
   // ── Textured model: files caught instead of downloaded. ──
   if (runs.length) {
-    // The slider is put back afterwards, so the project below saves the
-    // settings as they were before the run.
     const slider = vary && document.getElementById(VARY[vary.key].slider);
-    const before = slider && slider.value;
     // Export the live settings into one file; false = failed or cancelled.
     const exportRun = async (r) => {
       const caught = [];
@@ -1176,21 +1191,28 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       written.push(r.target);
       return true;
     };
-    if (variants.length) {
-      // Each variant is restored in turn; the settings from before come back afterwards.
-      let ok = true;
-      await app.variants.runEach(variants.map(v => v.id), async (id) => (ok = await exportRun(runs.find(r => r.variantId === id))));
-      if (!ok) return;
-    } else {
+    // Export a set of runs under the current settings, stepping the varied slider through its
+    // values; the slider is put back afterwards, so the project below saves the settings as they were.
+    const runSet = async (rs) => {
+      const before = slider && slider.value;
       try {
-        for (const r of runs) {
+        for (const r of rs) {
           if (vary) setVary(vary.key, r.value);
-          if (!(await exportRun(r))) return;
+          if (!(await exportRun(r))) return false;
         }
+        return true;
       } finally {
         if (slider) setVary(vary.key, before);
       }
+    };
+    let ok = true;
+    if (variants.length) {
+      // Each variant is restored in turn; the settings from before come back afterwards.
+      await app.variants.runEach(variants.map(v => v.id), async (id) => (ok = await runSet(runs.filter(r => r.variantId === id))));
+    } else {
+      ok = await runSet(runs);
     }
+    if (!ok) return;
     app.showSponsorOverlay();
   }
 
