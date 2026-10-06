@@ -281,6 +281,16 @@ function modal(title, body, buttons, { live = false } = {}) {
     card.querySelector('.primary')?.focus();
   });
 }
+/** "Resume your last session?" beside the sidebar; resolves true to resume. */
+export async function askResume(name, when) {
+  const body = el('div', {},
+    el('p', { style: 'margin:0 0 4px' }, name),
+    el('p', { class: 'muted', style: 'margin:0' }, `Saved ${when}`));
+  return (await modal('Resume your last session?', body, [
+    { label: 'Start fresh', value: false },
+    { label: 'Resume', value: true, primary: true },
+  ], { live: true })) === true;
+}
 const notice = (title, text) => modal(title, el('p', {}, text), [{ label: 'OK', value: 1, primary: true }]);
 
 // ── Preview colours ─────────────────────────────────────────────────────────

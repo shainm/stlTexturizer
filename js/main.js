@@ -39,7 +39,7 @@ import { getScaleReferenceLengths } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink, getDownloadSink } from './exporter.js';
-import { initPersonal } from './personal.js';
+import { initPersonal, askResume } from './personal.js';
 import { initVariants } from './variants.js';
 import { setPreviewColors } from './previewMaterial.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
@@ -3794,6 +3794,8 @@ async function handleModelFile(file, stepSettings = null) {
     const _extMatch = file.name.match(/\.(stl|obj|3mf|step|stp)$/i);
     currentStlExt   = _extMatch ? _extMatch[0].toLowerCase() : '';
     checkAmplitudeWarning();
+    _userModelLoaded = true;
+    _scheduleSessionSave();
 
     // Surface the STEP conversion verdict without blocking the user.
     if (step && step.diagnostics && !step.diagnostics.ok) {
@@ -5737,8 +5739,69 @@ function _autoSaveSettings() {
       const payload = { version: PROJECT_VERSION, ...getSettingsSnapshot() };
       sessionStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(payload));
     } catch { /* quota exceeded or disabled — ignore */ }
+    _scheduleSessionSave();
   }, 300);
 }
+
+// ── Resumable session (IndexedDB) ────────────────────────────────────────────
+// sessionStorage only keeps settings, so a hard reload (Shift+R) or a new tab
+// lost the model and paint. The whole project (model + paint + settings +
+// custom maps, same ZIP as a .bumpmesh export) is also kept in IndexedDB, and
+// on startup the user is asked whether to resume it.
+
+const SESSION_DB = 'bm-last-session';
+let _sessionSaveTimer = null;
+let _userModelLoaded = false;   // the startup cube doesn't count as work worth resuming
+
+function _sessionDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SESSION_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function _sessionKv(mode, fn) {
+  const db = await _sessionDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('kv', mode);
+      const req = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => resolve(req ? req.result : undefined);
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+function _scheduleSessionSave() {
+  if (_autoSavePaused || !currentGeometry || !_userModelLoaded) return;   // never overwrite with an empty session
+  clearTimeout(_sessionSaveTimer);
+  _sessionSaveTimer = setTimeout(async () => {
+    try {
+      const zipped = await _buildProjectZip(true, true);
+      await _sessionKv('readwrite', s => s.put({ zip: zipped, name: currentStlName || '', time: Date.now() }, 'last'));
+    } catch (err) { console.warn('Session save failed:', err); }
+  }, 2000);
+}
+
+async function _offerResumeSession() {
+  let rec;
+  try { rec = await _sessionKv('readonly', s => s.get('last')); } catch { return; }
+  if (!rec || !rec.zip || _userModelLoaded) return;
+  const when = new Date(rec.time).toLocaleString();
+  if (await askResume(rec.name || 'model', when)) {
+    try {
+      await importProject(new File([rec.zip], (rec.name || 'session') + '.bumpmesh'), { mode: 'all' });
+    } catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
+  } else {
+    try { await _sessionKv('readwrite', s => s.delete('last')); } catch { /* ignore */ }
+  }
+}
+window.addEventListener('pointerup', _scheduleSessionSave);   // paint strokes
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') _scheduleSessionSave();
+});
 
 function _restoreSessionSettings() {
   let raw;
@@ -6496,6 +6559,7 @@ if (_settingsPanel) {
 window.addEventListener('pointerup', _variants.refresh);
 
 // ── Personal edition (js/personal.js): unified Export, local files, colours ──
+_offerResumeSession();   // its popup styles come from initPersonal, which injects them synchronously
 initPersonal({
   t,
   importProject,
