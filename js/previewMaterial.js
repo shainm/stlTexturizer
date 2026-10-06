@@ -268,6 +268,11 @@ const sharedGLSL = /* glsl */`
       } else {
         hCap = sampleMap(l, vec2(u_sph, vCap));
       }
+      // Near the axis polar pinches: fade to flat top-down (matches mapping.js).
+      float wPolar = smoothstep(0.1, 0.2, rho / R);
+      float capU = (projN.z < 0.0 ? -rel.x : rel.x) / refU + 0.5;
+      float hFlat = sampleMap(l, vec2(capU, rel.y / refV + 0.5));
+      hCap = mix(hFlat, hCap, wPolar);
       return mix(hSide, hCap, capW);
 
     } else if (mappingMode == 5) {
