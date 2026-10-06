@@ -22,13 +22,17 @@
  *        location is known;
  *      · one Export button writes, into a job folder (each item optional):
  *          Textured\<name>_<textures>.3mf|.stl
- *          Texture Settings\<name>.bumpmesh            settings + selections + model
+ *          Texture Settings\<name> [<textures>] <made>.bumpmesh   a VARIATION: settings
+ *                                                      + selections + model
  *          Texture Settings\_shared settings.bumpmesh  settings for every model here
  *          Original\<original file>                    copied or moved there
- *        and, when <name> already exists there, archives the old files into
- *        Archive\<name> <last edit time>\ before replacing them;
- *      · opening a model from a job folder offers its saved project, else the
- *        folder's shared settings;
+ *        Saving a loaded variation with changed settings/selections writes a
+ *        new variation (named by its textures and when it was first made);
+ *        unchanged, it refreshes the loaded one. A textured file with the same
+ *        name is archived into Archive\<name> <last edit time>\ before replacing;
+ *      · opening a model from a job folder offers its saved variation (a
+ *        dropdown, newest first, when there are several), else the folder's
+ *        shared settings;
  *      · "Align texture to assembly": finds this part inside an assembly STL
  *        and lays the texture out in the assembly's frame, so separately
  *        printed parts (a stacking planter) continue each other's texture;
@@ -106,6 +110,79 @@ function stamp(ms) {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}${z(d.getMinutes())}`;
 }
 
+// ── Variations ──────────────────────────────────────────────────────────────
+// A model's project is saved as a VARIATION: "<name> [<textures>] <created>.bumpmesh".
+// <created> is when the variation was first made and never changes. Saving a
+// loaded variation with changed settings or selections starts a new variation
+// (the loaded one stays as it was); saving it unchanged just refreshes it.
+// Plain "<name>.bumpmesh" files from before variations count as variations too
+// (created = file time, textures from the file's own list).
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const variationRe = (name) => new RegExp(
+  `^${esc(name)}(?: \\[(.+)\\] (\\d{4})-(\\d\\d)-(\\d\\d) (\\d\\d)(\\d\\d)(?: \\(\\d+\\))?)?\\.bumpmesh$`, 'i');
+
+/** { textures, created (ms) | null } for a variation file name of this model, else null. */
+function parseVariation(name, fileName) {
+  const m = fileName.match(variationRe(safe(name)));
+  if (!m) return null;
+  return { textures: m[1] || null, created: m[2] ? new Date(+m[2], m[3] - 1, +m[4], +m[5], +m[6]).getTime() : null };
+}
+
+const variationFile = (name, textures, ms) => `${safe(name)} [${textures}] ${stamp(ms)}.bumpmesh`;
+
+/** The model's variations in the job folder, newest first. */
+async function listVariations(name) {
+  const out = [];
+  for (const sub of [SUB.project, LEGACY_PROJECT]) {
+    let items = [];
+    try { items = (await call('list', { dir: join(state.dest, sub) })).items; } catch { continue; }
+    for (const it of items) {
+      const v = !it.isDir && parseVariation(name, it.name);
+      if (v) out.push({ path: it.path, textures: v.textures, created: v.created ?? it.mtime * 1000 });
+    }
+  }
+  return out.sort((a, b) => b.created - a.created);
+}
+
+/** Pick one when there are several; the newest is preselected. null = none chosen. */
+async function chooseVariation(vars) {
+  const sel = el('select', { style: 'width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit' },
+    vars.map(v => el('option', { value: v.path }, `${v.textures || 'earlier save'} — made ${new Date(v.created).toLocaleString()}`)));
+  const c = await modal('Choose a variation',
+    el('div', {}, el('p', {}, `This model has ${vars.length} saved variations (different textures or settings). Open which one?`), sel),
+    [{ label: 'Just the model', value: null }, { label: 'Open variation', value: 1, primary: true }]);
+  return c ? sel.value : null;
+}
+
+/** Cheap string hash (FNV-1a) so a fingerprint stays small. */
+function hashString(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16) + ':' + s.length;
+}
+
+/** Settings + selections as they stand now (nothing about where or when it is saved). */
+async function fingerprint(app) {
+  const files = unzipSync(await app.buildProjectZip({}));
+  const s = JSON.parse(strFromU8(files['settings.json']));
+  delete s.pds;
+  return hashString(JSON.stringify(s) + '|' + (files['paint.json'] ? strFromU8(files['paint.json']) : ''));
+}
+
+/**
+ * A variation was just loaded: remember it and, once the load has settled,
+ * what its settings looked like, so Export can tell whether they changed.
+ */
+function rememberVariation(app, path, created) {
+  const v = { path, created, fp: null };
+  state.variant = v;
+  state.variantReady = (async () => {
+    await new Promise(r => setTimeout(r, 1500));
+    const fp = await fingerprint(app);
+    if (state.variant === v) v.fp = fp;
+  })().catch(() => {});
+}
+
 function lsGet(k, d) { try { return localStorage.getItem(LS + k) ?? d; } catch { return d; } }
 function lsSet(k, v) { try { localStorage.setItem(LS + k, v); } catch {} }
 
@@ -115,6 +192,8 @@ const state = {
   dest: lsGet('dest', ''),
   name: '',
   align: null,          // { assembly: path, frame: {min,size}, offset: {x,y,z} } for the loaded model
+  variant: null,        // the loaded/saved variation: { path, created (ms), fp (settings fingerprint) }
+  variantReady: null,
 };
 
 /** A model/project opened from <dest>\Original\ or <dest>\Texture Settings\ belongs to <dest>. */
@@ -727,6 +806,8 @@ async function projectLocated(app, path, bytes) {
   state.align = null;
   hideJointRings();
   updateAlignStatus();
+  const [ps] = await stat([path]);
+  rememberVariation(app, path, parseVariation(state.name, basename(path))?.created ?? (ps?.mtime || Date.now() / 1000) * 1000);
   if (info?.originalFile) {
     const cand = join(state.dest, SUB.original, info.originalFile);
     if ((await exists(cand)).exists) state.originalPath = cand;
@@ -744,22 +825,26 @@ async function modelLocated(app, path) {
   state.originalPath = path;
   state.name = stem(basename(path));
   state.align = null;
+  state.variant = null;
   hideJointRings();
   updateAlignStatus();
   adoptLocation(path);
 
-  // Recognise the job folder: this model's own project, else shared settings.
+  // Recognise the job folder: this model's variations, else shared settings.
   const pick = async (file) => {
     const [n, l] = await stat([join(state.dest, SUB.project, file), join(state.dest, LEGACY_PROJECT, file)]);
     return n.exists ? n : l;
   };
-  const o = await pick(`${safe(state.name)}.bumpmesh`), s = await pick(SHARED_FILE);
-  const own = o.path, shared = s.path;
-  if (o.exists) {
-    const c = await modal('Saved project found',
-      el('p', {}, `${basename(own)} (saved ${new Date(o.mtime * 1000).toLocaleString()}) has this model's settings and selections. Open it?`),
-      [{ label: 'Just the model', value: null }, { label: 'Open project', value: 1, primary: true }]);
-    if (c) return openProject(app, own);
+  const vars = await listVariations(state.name), s = await pick(SHARED_FILE);
+  const shared = s.path;
+  if (vars.length) {
+    // One variation: just offer it. Several: ask which (newest preselected).
+    const own = vars.length === 1
+      ? ((await modal('Saved project found',
+          el('p', {}, `${basename(vars[0].path)} (made ${new Date(vars[0].created).toLocaleString()}) has this model's settings and selections. Open it?`),
+          [{ label: 'Just the model', value: null }, { label: 'Open project', value: 1, primary: true }])) ? vars[0].path : null)
+      : await chooseVariation(vars);
+    if (own) return openProject(app, own);
   } else if (s.exists) {
     const bytes = await readFile(shared);
     const info = pdsInfo(bytes);
@@ -798,7 +883,7 @@ function watchDrops(app) {
       if (!path) {
         state.originalPath = null;
         state.name = isProject ? stem(f.name) : want;
-        state.align = null; hideJointRings(); updateAlignStatus();
+        state.align = null; state.variant = null; hideJointRings(); updateAlignStatus();
         return;
       }
       if (isProject) await projectLocated(app, path);
@@ -832,6 +917,11 @@ function textureLabel(app) {
 async function exportDialog(app) {
   if (!app.canExport()) { await notice('Export', 'Load a model and pick a texture first (or wait for the current export to finish).'); return; }
   if (!state.name) state.name = app.modelName();
+  await state.variantReady;
+  const fpNow = await fingerprint(app);
+  // A loaded variation saved unchanged is refreshed; anything else is a new variation.
+  const projectFile = (name) => (state.variant && state.variant.fp === fpNow && parseVariation(name, basename(state.variant.path)))
+    ? basename(state.variant.path) : variationFile(name, textureLabel(app), Date.now());
 
   const nameIn = el('input', { type: 'text', value: state.name });
   const destBox = el('span', { class: 'path', title: state.dest || '' }, state.dest || 'No folder chosen');
@@ -856,7 +946,7 @@ async function exportDialog(app) {
   const item = (box, label, ...rest) => el('div', { class: 'item' }, el('label', {}, box, ' ' + label), ...rest);
   const rows = {
     model: item(doModel, 'Textured model', fmtBox),
-    proj: item(doProj, 'Project (settings + selections)'),
+    proj: item(doProj, state.variant && state.variant.fp && state.variant.fp !== fpNow ? 'Project (changed: saved as a new variation)' : 'Project (settings + selections)'),
     shared: item(doShared, 'Shared settings for this folder'),
     orig: item(doOrig, 'Original model', origModes),
   };
@@ -870,7 +960,7 @@ async function exportDialog(app) {
     origPathRow.classList.toggle('off', !doOrig.checked);
     const lines = [
       doModel.checked && `${SUB.textured}\\${n}_${textureLabel(app)}.${fmtNow()}`,
-      doProj.checked && `${SUB.project}\\${n}.bumpmesh`,
+      doProj.checked && `${SUB.project}\\${projectFile(n)}`,
       doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
       doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
@@ -908,7 +998,7 @@ async function exportDialog(app) {
     lsSet('format', fmtNow());
     if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
     state.name = nameIn.value.trim() || app.modelName();
-    await runExport(app, opts);
+    await runExport(app, opts, fpNow);
     return;
   }
 }
@@ -933,12 +1023,22 @@ async function migrateFolders(dest) {
   }
 }
 
-async function runExport(app, { format, project, shared, originalMode }) {
+async function runExport(app, { format, project, shared, originalMode }, fp) {
   await migrateFolders(state.dest);
   const name = safe(state.name), tl = textureLabel(app);
   const texturedDir = join(state.dest, SUB.textured);
   const target = format ? join(texturedDir, `${name}_${tl}.${format}`) : null;
-  const projectPath = join(state.dest, SUB.project, `${name}.bumpmesh`);
+  // Project = a variation: the loaded one refreshed when nothing changed, else a new one.
+  const cur = state.variant;
+  const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
+  let projectPath = null, created = Date.now();
+  if (project && refresh) { projectPath = join(state.dest, SUB.project, basename(cur.path)); created = cur.created; }
+  else if (project) {
+    const base = variationFile(name, tl, created).replace(/\.bumpmesh$/, '');
+    projectPath = join(state.dest, SUB.project, `${base}.bumpmesh`);
+    // Two variations in the same minute must not collide.
+    for (let k = 2; (await exists(projectPath)).exists; k++) projectPath = join(state.dest, SUB.project, `${base} (${k}).bumpmesh`);
+  }
   const sharedPath = join(state.dest, SUB.project, SHARED_FILE);
   const origName = state.originalPath ? basename(state.originalPath) : null;
   const origTarget = origName ? join(state.dest, SUB.original, origName) : null;
@@ -946,17 +1046,13 @@ async function runExport(app, { format, project, shared, originalMode }) {
   const doOrig = originalMode !== 'none' && origTarget && !origAlreadyThere;
 
   // ── Same name already here? Archive the old files first. ──
+  // (Projects never get replaced: they are variations. A textured file is only
+  // replaced when its name — model + textures — is the same.)
   const old = [];
-  const [projStat] = await stat([projectPath]);
-  if (project && projStat.exists) old.push(projStat);
-  if (format) {
-    for (const it of (await call('list', { dir: texturedDir })).items) {
-      if (!it.isDir && it.name.toLowerCase().startsWith(name.toLowerCase() + '_')) old.push(it);
-    }
-  }
+  for (const r of runs) { const t = await exists(r.target); if (t.exists) old.push(t); }
   if (doOrig) { const o = await exists(origTarget); if (o.exists) old.push(o); }
   if (old.length) {
-    const when = (projStat.exists ? projStat : old.reduce((a, b) => (b.mtime > a.mtime ? b : a))).mtime * 1000;
+    const when = old.reduce((a, b) => (b.mtime > a.mtime ? b : a)).mtime * 1000;
     const ok = await modal(`"${name}" already exists here`,
       el('div', {},
         el('p', {}, `Last edited ${new Date(when).toLocaleString()}. Archive the old files and replace them?`),
@@ -994,6 +1090,8 @@ async function runExport(app, { format, project, shared, originalMode }) {
     const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align } });
     await writeFile(projectPath, new Blob([zip]));
     written.push(projectPath);
+    state.variant = { path: projectPath, created, fp };
+    state.variantReady = null;
   }
   // ── Shared settings for the folder (no model, no selections). ──
   if (shared) {
