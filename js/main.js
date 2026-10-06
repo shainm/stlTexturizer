@@ -544,7 +544,8 @@ function _currentTextureAspectU() {
 // U scale to integer tile counts can make the wrap seam disappear.
 function _isSeamlessWrapMode() {
   return settings.mappingMode === 3 /* MODE_CYLINDRICAL */ ||
-         settings.mappingMode === 4 /* MODE_SPHERICAL */;
+         settings.mappingMode === 4 /* MODE_SPHERICAL */ ||
+         settings.mappingMode === 7 /* MODE_SPHERICAL_FLAT */;
 }
 
 // Round a U texture size (mm) to the nearest seamless-wrap value:
@@ -1592,7 +1593,7 @@ function wireEvents() {
   // ── Settings ──
   mappingSelect.addEventListener('change', () => {
     settings.mappingMode = parseInt(mappingSelect.value, 10);
-    capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
+    capAngleRow.style.display = (settings.mappingMode === 3 || settings.mappingMode === 7) ? '' : 'none';
     updateCylinderUIVisibility();
     // The wrap circumference is mode-specific (cylinder vs sphere equator),
     // so entering a wrap mode with snapping on re-snaps the U scale.
@@ -3822,7 +3823,7 @@ async function handleModelFile(file, stepSettings = null) {
       if (idx >= 0) selectPreset(idx);
     }
     mappingSelect.value = String(settings.mappingMode);
-    capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
+    capAngleRow.style.display = (settings.mappingMode === 3 || settings.mappingMode === 7) ? '' : 'none';
 
     // Fresh model → reset cylinder axis to AABB defaults so the gizmo lands on
     // a sensible starting point. (Project snapshot restore overrides this
@@ -5574,7 +5575,7 @@ function _migrateSnapshotScaleToMm(snap) {
   const { refU, refV } = getScaleReferenceLengths(mode, { cylinderRadius: out.cylinderRadius ?? null }, b);
   // Short-lived fixed-reference feature (July 2026): its reference overrode
   // the bbox extent for planar/triplanar/cubic modes.
-  const isAngular = mode === 3 /* CYLINDRICAL */ || mode === 4 /* SPHERICAL */;
+  const isAngular = mode === 3 /* CYLINDRICAL */ || mode === 4 /* SPHERICAL */ || mode === 7 /* SPHERICAL_FLAT */;
   const legacyRef = !isAngular && out.fixedWorldTextureScale && Number(out.referenceExtentMm) > 0
     ? Number(out.referenceExtentMm) : null;
   const rU = legacyRef ?? refU;

@@ -34,6 +34,7 @@ export const MODE_CYLINDRICAL = 3;
 export const MODE_SPHERICAL   = 4;
 export const MODE_TRIPLANAR   = 5;
 export const MODE_CUBIC       = 6;
+export const MODE_SPHERICAL_FLAT = 7;
 
 /** Texture layers the preview can composite at once (one vec4 attribute channel each). */
 export const MAX_LAYERS = 4;
@@ -228,6 +229,46 @@ const sharedGLSL = /* glsl */`
         return mix(hLeft, hRight, t);
       }
       return sampleMap(l, vec2(u_sph, v_sph));
+
+    } else if (mappingMode == 7) {
+      // Spherical walls + flat top-down projection on up/down faces (mirror of
+      // MODE_SPHERICAL_FLAT in mapping.js).
+      float R = 0.5 * md;
+      float refU = TWO_PI * R;
+      float refV = PI * R;
+      float r     = length(rel);
+      float phi   = acos(clamp(rel.z / max(r, 1e-4), -1.0, 1.0));
+      float u_sph = atan(rel.y, rel.x) / TWO_PI + 0.5;
+      float v_sph = rel.z / refV + 0.5; // height in mm (matches mapping.js)
+
+      float seamBand = seamBandWidth * 0.1;
+      float seamDist = min(u_sph, 1.0 - u_sph);
+      float hSide;
+      if (seamBand > 0.001 && seamDist < seamBand) {
+        float d = u_sph < 0.5 ? u_sph : u_sph - 1.0;
+        float t = smoothstep(0.0, 1.0, (d + seamBand) / (2.0 * seamBand));
+        hSide = mix(sampleMap(l, vec2(1.0 + d, v_sph)), sampleMap(l, vec2(d, v_sph)), t);
+      } else {
+        hSide = sampleMap(l, vec2(u_sph, v_sph));
+      }
+
+      float capThreshold = cos(radians(layerCapAngle[l]));
+      float blendHalf = seamBandWidth * 0.5;
+      float capW = smoothstep(capThreshold - blendHalf, capThreshold + blendHalf, abs(blendN.z));
+      if (capW <= 0.0) return hSide;
+      // Polar cap: U = angle, V = radial distance from the axis in mm, counted
+      // from the pole (matches MODE_SPHERICAL_FLAT in mapping.js).
+      float rho = length(rel.xy);
+      float vCap = projN.z < 0.0 ? 1.0 - rho / refV : rho / refV;
+      float hCap;
+      if (seamBand > 0.001 && seamDist < seamBand) {
+        float d = u_sph < 0.5 ? u_sph : u_sph - 1.0;
+        float t = smoothstep(0.0, 1.0, (d + seamBand) / (2.0 * seamBand));
+        hCap = mix(sampleMap(l, vec2(1.0 + d, vCap)), sampleMap(l, vec2(d, vCap)), t);
+      } else {
+        hCap = sampleMap(l, vec2(u_sph, vCap));
+      }
+      return mix(hSide, hCap, capW);
 
     } else if (mappingMode == 5) {
       vec3 blend = abs(projN);

@@ -83,6 +83,7 @@ export default {
   "projection.cubic": "Cubic (Box)",
   "projection.cylindrical": "Cylindrical",
   "projection.spherical": "Spherical",
+  "projection.sphericalFlat": "Spherical (Adaptive)",
   "projection.planarXY": "Planar XY",
   "projection.planarXZ": "Planar XZ",
   "projection.planarYZ": "Planar YZ",

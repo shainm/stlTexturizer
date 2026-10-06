@@ -16,6 +16,10 @@ export const MODE_CYLINDRICAL = 3;
 export const MODE_SPHERICAL   = 4;
 export const MODE_TRIPLANAR   = 5;
 export const MODE_CUBIC       = 6;
+// Spherical (Adaptive): walls use U = angle, V = height in mm; faces that point
+// up/down switch to a polar projection (V = radial distance in mm), so wide
+// flat bottoms/flanges keep the wall's texture scale.
+export const MODE_SPHERICAL_FLAT = 7;
 
 const TWO_PI = Math.PI * 2;
 
@@ -40,7 +44,8 @@ export function getScaleReferenceLengths(mode, settings, bounds) {
       const C = TWO_PI * r;
       return { refU: C, refV: C };
     }
-    case MODE_SPHERICAL: {
+    case MODE_SPHERICAL:
+    case MODE_SPHERICAL_FLAT: {
       const R = Math.max(0.5 * md, 1e-6);
       return { refU: TWO_PI * R, refV: Math.PI * R };
     }
@@ -299,6 +304,67 @@ export function computeUV(pos, normal, mode, settings, bounds) {
       u = uRaw;
       v = vRaw;
       break;
+    }
+
+    case MODE_SPHERICAL_FLAT: {
+      // Same wall mapping as MODE_SPHERICAL (U = arc around Z, V = pole-to-pole
+      // arc, both in mm), cross-faded with a flat top-down projection where the
+      // normal is within capAngle of vertical. Seen from above the flat
+      // projection is true scale, so a flange keeps its texture size however far
+      // it reaches from the centre (spherical squeezes V there, as phi barely
+      // changes with radius). Cap width follows Seam Blend like the cylinder's.
+      const { refU, refV } = getScaleReferenceLengths(mode, settings, bounds);
+      const rx = pos.x - center.x;
+      const ry = pos.y - center.y;
+      const rz = pos.z - center.z;
+      const r  = Math.sqrt(rx*rx + ry*ry + rz*rz);
+      const phi   = Math.acos(Math.max(-1, Math.min(1, rz / Math.max(r, 1e-6))));
+      const uRaw = (Math.atan2(ry, rx) / TWO_PI) + 0.5;
+      // Walls: V is height in mm (true scale on vertical walls, like the
+      // cylinder). The sphere's phi barely changes with height far from the
+      // centre, which stretched the texture vertically on flared parts.
+      const vRaw = rz / refV + 0.5;
+
+      const seamBand = (settings.seamBandWidth ?? 0.5) * 0.1;
+      const seamDist = Math.min(uRaw, 1.0 - uRaw);
+      // Wall-style samples (cross-faded at the atan2 seam) for a given V.
+      const seamSamples = (vv) => {
+        if (seamBand > 0.001 && seamDist < seamBand) {
+          const d = uRaw < 0.5 ? uRaw : uRaw - 1.0;
+          const tRaw = (d + seamBand) / (2.0 * seamBand);
+          const t = tRaw * tRaw * (3 - 2 * tRaw);
+          const tLeft  = applyTransform(1.0 + d, vv, scaleU, scaleV, offsetU, offsetV, cosR, sinR);
+          const tRight = applyTransform(d,       vv, scaleU, scaleV, offsetU, offsetV, cosR, sinR);
+          return [
+            { u: tRight.u, v: tRight.v, w: t },
+            { u: tLeft.u,  v: tLeft.v,  w: 1 - t },
+          ];
+        }
+        const tS = applyTransform(uRaw, vv, scaleU, scaleV, offsetU, offsetV, cosR, sinR);
+        return [{ u: tS.u, v: tS.v, w: 1 }];
+      };
+      const sideSamples = seamSamples(vRaw);
+
+      const capThreshold = Math.cos((settings.capAngle ?? 20) * Math.PI / 180);
+      const blendHalf = (settings.seamBandWidth ?? 0.5) * 0.5;
+      const capRaw = Math.max(0, Math.min(1, (Math.abs(normal.z) - (capThreshold - blendHalf)) / (2 * blendHalf + 1e-6)));
+      const capW = capRaw * capRaw * (3 - 2 * capRaw);
+      if (capW <= 0) {
+        if (sideSamples.length === 1) return sideSamples[0];
+        return { triplanar: true, samples: sideSamples };
+      }
+      // Polar projection on the caps: U stays the angle around Z, V is the
+      // radial distance from the axis in mm (rho / refV), counted from the pole
+      // like the sphere's V. At the part's wall radius a tile is therefore the
+      // same size as on the walls, and it grows with distance from the centre
+      // instead of being squeezed (phi barely changes with radius).
+      const rho = Math.sqrt(rx*rx + ry*ry);
+      const vCap = normal.z < 0 ? 1 - rho / refV : rho / refV;
+      const capSamples = seamSamples(vCap);
+      if (capW >= 1) return capSamples.length === 1 ? capSamples[0] : { triplanar: true, samples: capSamples };
+      const samples = sideSamples.map(s => ({ u: s.u, v: s.v, w: s.w * (1 - capW) }));
+      for (const s of capSamples) samples.push({ u: s.u, v: s.v, w: s.w * capW });
+      return { triplanar: true, samples };
     }
 
     case MODE_CUBIC: {
