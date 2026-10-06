@@ -609,7 +609,6 @@ function alignModular(app, cfg, opts = {}) {
     modular: { pitch, positions: cfg.rotate ? positions : 1 },
   };
   state.align = { mode: 'modular', frame, seat, pitch, xy, rotate: !!cfg.rotate, positions };
-  showJointRings(app, seat, pitch > 0 ? seat + pitch : null);
   app.setTextureFrame(frame);
   updateAlignStatus();
   return true;
@@ -741,7 +740,7 @@ async function alignDialog(app) {
     a ? { label: 'Remove', value: 'clear' } : null,
     { label: 'Apply', value: 'apply', primary: true },
   ].filter(Boolean));
-  if (choice !== 'apply' || body.querySelector('input[name="pds-align-mode"]:checked').value !== 'modular') hideJointRings();
+  hideJointRings(); // the rings are only shown while this dialog is open
   if (choice === 'clear') return clearAlign(app);
   if (choice !== 'apply') return;
   const mode = body.querySelector('input[name="pds-align-mode"]:checked').value;
@@ -782,7 +781,6 @@ async function restoreAlign(app, info, isOwnProject) {
   if (isOwnProject && a.frame) {
     state.align = a;
     app.setTextureFrame(a.frame);
-    if (a.mode === 'modular') showJointRings(app, a.seat, a.pitch > 0 ? a.seat + a.pitch : null);
     updateAlignStatus();
     return;
   }
