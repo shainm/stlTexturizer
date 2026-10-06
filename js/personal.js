@@ -219,11 +219,18 @@ function el(tag, attrs = {}, ...kids) {
 function injectStyle() {
   document.head.append(el('style', {}, `
     .pds-dim { opacity: .45; }
-    .pds-modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center;
-      justify-content: center; z-index: 10000; }
-    .pds-card { background: var(--surface); color: var(--text); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 18px 20px; width: min(600px, calc(100vw - 32px));
-      box-shadow: 0 12px 40px rgba(0,0,0,.45); font-size: 13px; }
+    /* Popups sit beside the sidebar like the settings menu: no dimming, so the
+       part stays in view. The overlay blocks clicks, unless the popup is "live"
+       (the 3D view stays usable underneath, e.g. to orbit while lining up). */
+    .pds-modal { position: fixed; inset: 0; z-index: 10000; }
+    .pds-modal.live { pointer-events: none; }
+    .pds-card { position: fixed; top: 58px; right: 12px; max-height: calc(100vh - 70px); overflow-y: auto;
+      pointer-events: auto; scrollbar-width: thin;
+      background: var(--panel-bg, var(--surface)); color: var(--text);
+      border: 1px solid var(--panel-border, var(--border));
+      -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none);
+      border-radius: var(--panel-radius, var(--radius)); padding: 14px 16px; width: min(440px, calc(100vw - 24px));
+      box-shadow: var(--panel-shadow, 0 12px 40px rgba(0,0,0,.45)); font-size: 13px; }
     .pds-card h3 { margin: 0 0 12px; font-size: 15px; }
     .pds-card .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
     .pds-card label.k { width: 70px; color: var(--text-muted); }
@@ -257,7 +264,7 @@ function injectStyle() {
 }
 
 /** Modal with buttons; resolves to the clicked button's value (null on Escape). */
-function modal(title, body, buttons) {
+function modal(title, body, buttons, { live = false } = {}) {
   return new Promise((resolve) => {
     const close = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
@@ -265,7 +272,10 @@ function modal(title, body, buttons) {
       el('h3', {}, title), body,
       el('div', { class: 'btns' }, buttons.map(b =>
         el('button', { class: 'pds-btn' + (b.primary ? ' primary' : ''), onclick: () => close(b.value) }, b.label))));
-    const overlay = el('div', { class: 'pds-modal' }, card);
+    const overlay = el('div', { class: 'pds-modal' + (live ? ' live' : '') }, card);
+    // Beside the sidebar when it is showing, else at the window's edge.
+    const sp = document.getElementById('settings-panel'), r = sp && sp.getBoundingClientRect();
+    card.style.right = ((r && r.width > 0 && r.left < window.innerWidth ? window.innerWidth - r.left : 0) + 12) + 'px';
     document.addEventListener('keydown', onKey, true);
     document.body.append(overlay);
     card.querySelector('.primary')?.focus();
@@ -739,7 +749,7 @@ async function alignDialog(app) {
     { label: 'Cancel', value: null },
     a ? { label: 'Remove', value: 'clear' } : null,
     { label: 'Apply', value: 'apply', primary: true },
-  ].filter(Boolean));
+  ].filter(Boolean), { live: true }); // keep the view orbit-able to check the joint rings
   hideJointRings(); // the rings are only shown while this dialog is open
   if (choice === 'clear') return clearAlign(app);
   if (choice !== 'apply') return;
