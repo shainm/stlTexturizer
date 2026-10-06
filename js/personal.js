@@ -1125,18 +1125,11 @@ async function exportDialog(app) {
       doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
     // Show the paths as a collapsible folder tree, every file listed once under its folders.
-    const root = new Map();
-    for (const l of lines) l.split('\\').reduce((m, p) => m.get(p) || m.set(p, new Map()).get(p), root);
     const wasOpen = new Set([...where.querySelectorAll('details[open]')].map(d => d.dataset.path));
-    const build = (m, path, depth) => [...m].map(([name, kids]) => {
-      if (!kids.size) return el('div', { style: 'padding-left:16px;word-break:break-all' }, name);
-      const p = path + '\\' + name;
-      const d = el('details', { style: 'padding-left:' + (depth ? 12 : 0) + 'px', 'data-path': p },
-        el('summary', { style: 'cursor:pointer' }, name), ...build(kids, p, depth + 1));
-      d.open = where.firstChild ? wasOpen.has(p) : depth === 0; // keep the user's open/closed folders across refreshes
-      return d;
-    });
-    where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('div', {}, build(root, '', 0)));
+    const first = !where.firstChild;
+    // Keep the user's open/closed folders across refreshes.
+    where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'),
+      pathTree(lines, (p, depth) => first ? depth === 0 : wasOpen.has(p)));
   }
   for (const x of [doModel, doImg, doBake, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
   fmtBox.addEventListener('change', refresh);
@@ -1229,7 +1222,7 @@ async function exportDialog(app) {
       app.showSponsorOverlay();
       const done = await modal('Exported', el('div', {},
         el('p', {}, `Saved to ${state.dest}`),
-        el('ul', {}, sink.map(p => el('li', {}, p.slice(state.dest.length + 1))))),
+        pathTree(sink.map(p => p.slice(state.dest.length + 1)), (p, depth) => depth === 0)),
         [{ label: 'Open folder', value: 'open' }, { label: 'Done', value: null, primary: true }]);
       if (done === 'open') await call('open-folder', { path: state.dest });
     }
@@ -1260,6 +1253,21 @@ async function migrateFolders(dest) {
       await call('move', { src: tmp, dst: join(dest, target) });
     }
   }
+}
+
+/** Relative paths as a collapsible folder tree, every file listed once under its folders. `isOpen(path, depth)` sets which folders start open. */
+function pathTree(paths, isOpen) {
+  const root = new Map();
+  for (const l of paths) l.split('\\').reduce((m, p) => m.get(p) || m.set(p, new Map()).get(p), root);
+  const build = (m, path, depth) => [...m].map(([name, kids]) => {
+    if (!kids.size) return el('div', { style: 'padding-left:16px;word-break:break-all' }, name);
+    const p = path + '\\' + name;
+    const d = el('details', { style: 'padding-left:' + (depth ? 12 : 0) + 'px', 'data-path': p },
+      el('summary', { style: 'cursor:pointer' }, name), ...build(kids, p, depth + 1));
+    d.open = isOpen(p, depth);
+    return d;
+  });
+  return el('div', {}, build(root, '', 0));
 }
 
 /** Writes one model's export; false = cancelled or failed. With `sink` (an array) the written paths are added to it and no summary is shown. */
@@ -1411,7 +1419,7 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   app.batch.end();
   const done = await modal('Exported', el('div', {},
     el('p', {}, `Saved to ${state.dest}`),
-    el('ul', {}, written.map(p => el('li', {}, rel(p))))),
+    pathTree(written.map(rel), (p, depth) => depth === 0)),
     [{ label: 'Open folder', value: 'open' }, { label: 'Done', value: null, primary: true }]);
   if (done === 'open') await call('open-folder', { path: state.dest });
   return true;
