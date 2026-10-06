@@ -45,7 +45,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink } from './exporter.js';
 import { THREE } from './threeCompat.js';
-import { getCamera, getRenderer, getCurrentMesh, setDiagEdges, requestRender } from './viewer.js';
+import { getCamera, getRenderer, getCurrentMesh, setDiagEdges, requestRender, setViewDirection, captureIsoImage } from './viewer.js';
 import { initSettingsMenu, modelColors, currentThemeColor, materialColors, modelColorMode } from './pdsSettings.js';
 import { onLogoIcon } from './themedLogo.js';
 
@@ -227,15 +227,16 @@ function injectStyle() {
     /* Popups sit beside the sidebar like the settings menu: no dimming, so the
        part stays in view. The overlay blocks clicks, unless the popup is "live"
        (the 3D view stays usable underneath, e.g. to orbit while lining up). */
-    .pds-modal { position: fixed; inset: 0; z-index: 10000; }
-    .pds-modal.live { pointer-events: none; }
-    .pds-card { position: fixed; top: 58px; right: 12px; max-height: calc(100vh - 70px); overflow-y: auto;
-      pointer-events: auto; scrollbar-width: thin;
+    .pds-modal { position: fixed; inset: 0; z-index: 10000; pointer-events: none; }
+    .pds-card { position: fixed; top: 58px; right: 12px; max-height: calc(100vh - 70px); overflow: hidden;
+      display: flex; flex-direction: column; pointer-events: auto;
       background: var(--panel-bg, var(--surface)); color: var(--text);
       border: 1px solid var(--panel-border, var(--border));
       -webkit-backdrop-filter: var(--panel-blur, none); backdrop-filter: var(--panel-blur, none);
       border-radius: var(--panel-radius, var(--radius)); padding: 14px 16px; width: min(440px, calc(100vw - 24px));
       box-shadow: var(--panel-shadow, 0 12px 40px rgba(0,0,0,.45)); font-size: 13px; }
+    /* Only the content scrolls, inset from the card's rounded corners; the buttons stay in view. */
+    .pds-card .scroll { overflow-y: auto; min-height: 0; margin: 0 -8px 0 0; padding-right: 8px; scrollbar-width: thin; }
     .pds-card h3 { margin: 0 0 12px; font-size: 15px; }
     .pds-card .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
     .pds-card label.k { width: 70px; color: var(--text-muted); }
@@ -271,10 +272,26 @@ function injectStyle() {
 /** Modal with buttons; resolves to the clicked button's value (null on Escape). */
 function modal(title, body, buttons, { live = false } = {}) {
   return new Promise((resolve) => {
-    const close = (v) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const close = (v) => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('pointerdown', onOutside, true);
+      resolve(v);
+    };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
+    // A click outside the card dismisses it (the click still reaches whatever was clicked, so the
+    // settings gear swaps straight over). The Export button would just reopen it, so its click is dropped.
+    const onOutside = (e) => {
+      if (live || card.contains(e.target)) return;
+      if (e.target.closest?.('#pds-export-btn')) {
+        const eat = (c) => { c.stopPropagation(); c.preventDefault(); };
+        document.addEventListener('click', eat, { capture: true, once: true });
+        setTimeout(() => document.removeEventListener('click', eat, true), 500);
+      }
+      close(null);
+    };
     const card = el('div', { class: 'pds-card', role: 'dialog', 'aria-modal': 'true' },
-      el('h3', {}, title), body,
+      el('div', { class: 'scroll' }, el('h3', {}, title), body),
       el('div', { class: 'btns' }, buttons.map(b =>
         el('button', { class: 'pds-btn' + (b.primary ? ' primary' : ''), onclick: () => close(b.value) }, b.label))));
     const overlay = el('div', { class: 'pds-modal' + (live ? ' live' : '') }, card);
@@ -282,8 +299,10 @@ function modal(title, body, buttons, { live = false } = {}) {
     const sp = document.getElementById('settings-panel'), r = sp && sp.getBoundingClientRect();
     card.style.right = ((r && r.width > 0 && r.left < window.innerWidth ? window.innerWidth - r.left : 0) + 12) + 'px';
     document.addEventListener('keydown', onKey, true);
+    document.addEventListener('pointerdown', onOutside, true);
     document.body.append(overlay);
-    card.querySelector('.primary')?.focus();
+    card.querySelector('.primary')?.focus({ preventScroll: true });
+    card.querySelector('.scroll').scrollTop = 0;
   });
 }
 /** "Resume your last session?" beside the sidebar; resolves true to resume. */
@@ -1013,6 +1032,7 @@ async function exportDialog(app) {
 
   const doModel = chk('do-model', '1'), doProj = chk('do-proj', '1'), doShared = chk('do-shared', '1'), doOrig = chk('do-orig', '1');
   if (!state.originalPath) doOrig.checked = false; // nothing to copy until it's located
+  const doImg = chk('do-img', '1'), doBake = chk('bake-colors', '1');
   const fmt = lsGet('format', '3mf');
   const fmtBox = el('span', { class: 'opts' }, radio('pds-fmt', '3mf', '3MF', fmt), radio('pds-fmt', 'stl', 'STL', fmt));
   const origMode = lsGet('orig-mode', 'copy');
@@ -1025,6 +1045,8 @@ async function exportDialog(app) {
   const item = (box, label, ...rest) => el('div', { class: 'item' }, el('label', {}, box, ' ' + label), ...rest);
   const rows = {
     model: item(doModel, 'Textured model', fmtBox),
+    img: item(doImg, 'Iso preview image (PNG) beside each model'),
+    bake: item(doBake, 'Bake the preview colours into 3MF files (and a thumbnail for the file manager)'),
     proj: item(doProj, state.variant && state.variant.fp && state.variant.fp !== fpNow ? 'Project (changed: saved as a new variation)' : 'Project (settings + selections)'),
     shared: item(doShared, 'Shared settings for this folder'),
     orig: item(doOrig, 'Original model', origModes),
@@ -1062,6 +1084,8 @@ async function exportDialog(app) {
     const n = safe(nameIn.value.trim() || app.modelName() || 'model');
     const jd = state.dest ? jobDir(n).slice(state.dest.length + 1) : n; // '' when the export folder is already the model's
     rows.model.classList.toggle('off', !doModel.checked);
+    rows.img.classList.toggle('off', !doModel.checked);
+    rows.bake.classList.toggle('off', !doModel.checked || fmtNow() !== '3mf');
     rows.orig.classList.toggle('off', !doOrig.checked);
     origPathRow.classList.toggle('off', !doOrig.checked);
     const vs = variantsNow();
@@ -1078,7 +1102,8 @@ async function exportDialog(app) {
       // Each run's model sits in its own folder under Textured, with the project that made it.
       return exportStems(vs, varyOpt, name, textureLabel(app)).flatMap(s => {
         const d = `${dir ? dir + '\\' : ''}${SUB.textured}\\${s.dir ? s.dir + '\\' : ''}`;
-        return [`${d}${s.stem}.${fmtNow()}`, doProj.checked && s.dir && `${d}${s.stem}.bumpmesh`].filter(Boolean);
+        const up = d.replace(/[^\\]+\\$/, '');   // the run's folder is one level down from its .bumpmesh
+        return [`${d}${s.stem}.${fmtNow()}`, doImg.checked && `${d}${s.stem}.png`, doProj.checked && s.dir && `${up}${s.stem}.bumpmesh`].filter(Boolean);
       });
     });
     const pre = jd ? jd + '\\' : '';
@@ -1089,13 +1114,25 @@ async function exportDialog(app) {
     warn.classList.toggle('hidden', !warn.textContent);
     const lines = [
       ...modelLines,
-      doProj.checked && `${pre}${SUB.project}\\${projectFile(n)}`,
-      doShared.checked && `${pre}${SUB.project}\\${SHARED_FILE}`,
+      doProj.checked && `${SUB.project}\\${projectFile(n)}`,
+      doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
       doOrig.checked && state.originalPath && `${pre}${SUB.original}\\${basename(state.originalPath)}`,
     ].filter(Boolean);
-    where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('ul', {}, lines.map(l => el('li', {}, l))));
+    // Show the paths as a collapsible folder tree, every file listed once under its folders.
+    const root = new Map();
+    for (const l of lines) l.split('\\').reduce((m, p) => m.get(p) || m.set(p, new Map()).get(p), root);
+    const wasOpen = new Set([...where.querySelectorAll('details[open]')].map(d => d.dataset.path));
+    const build = (m, path, depth) => [...m].map(([name, kids]) => {
+      if (!kids.size) return el('div', { style: 'padding-left:16px;word-break:break-all' }, name);
+      const p = path + '\\' + name;
+      const d = el('details', { style: 'padding-left:' + (depth ? 12 : 0) + 'px', 'data-path': p },
+        el('summary', { style: 'cursor:pointer' }, name), ...build(kids, p, depth + 1));
+      d.open = where.firstChild ? wasOpen.has(p) : depth === 0; // keep the user's open/closed folders across refreshes
+      return d;
+    });
+    where.replaceChildren(el('div', {}, lines.length ? 'Writes:' : 'Nothing selected'), el('div', {}, build(root, '', 0)));
   }
-  for (const x of [nameIn, doModel, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
+  for (const x of [nameIn, doModel, doImg, doBake, doProj, doShared, doOrig, doVary, varyText, ...vchks.map(c => c.box), ...mchks.map(c => c.box)]) x.addEventListener('input', refresh);
   fmtBox.addEventListener('change', refresh);
   refresh();
 
@@ -1103,7 +1140,7 @@ async function exportDialog(app) {
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Folder'), destBox, el('button', { class: 'pds-btn', onclick: pickDest }, 'Browse…')),
     el('div', { class: 'row' }, el('label', { class: 'k' }, 'Name'), nameIn),
     el('hr'),
-    rows.model, ...modelRows, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
+    rows.model, rows.img, rows.bake, ...modelRows, ...variantRows, rows.vary, varyRow, warn, rows.proj, rows.shared, rows.orig, origPathRow,
     el('hr'),
     where);
 
@@ -1117,6 +1154,7 @@ async function exportDialog(app) {
       originalMode: doOrig.checked ? origModes.querySelector('input:checked').value : 'none',
       vary: null,
       variants: variantsNow(),
+      image: doModel.checked && doImg.checked,
     };
     const vv = varyNow();
     if (vv && vv.length) opts.vary = { key: varyKey.value, values: vv };
@@ -1138,6 +1176,8 @@ async function exportDialog(app) {
     lsSet('do-model', doModel.checked ? '1' : '0'); lsSet('do-proj', doProj.checked ? '1' : '0');
     lsSet('do-shared', doShared.checked ? '1' : '0'); lsSet('do-orig', doOrig.checked ? '1' : '0');
     lsSet('format', fmtNow());
+    lsSet('do-img', doImg.checked ? '1' : '0'); lsSet('bake-colors', doBake.checked ? '1' : '0');
+    app.setBakeColors(doBake.checked);
     lsSet('do-vary', doVary.checked ? '1' : '0'); lsSet('vary-key', varyKey.value); lsSet('vary-values-' + varyKey.value, varyText.value);
     if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
     state.name = nameIn.value.trim() || app.modelName();
@@ -1198,7 +1238,7 @@ async function migrateFolders(dest) {
 }
 
 /** Writes one model's export; false = cancelled or failed. With `sink` (an array) the written paths are added to it and no summary is shown. */
-async function runExport(app, { format, project, shared, originalMode, vary, variants = [] }, fp, sink = null) {
+async function runExport(app, { format, project, shared, originalMode, vary, variants = [], image = false }, fp, sink = null) {
   const job = jobDir(state.name);
   try { await migrateFolders(job); } catch {} // a new model folder has nothing to migrate
   const name = safe(state.name), tl = textureLabel(app);
@@ -1209,14 +1249,14 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
   const cur = state.variant;
   const refresh = !!(cur && cur.fp === fp && parseVariation(name, basename(cur.path)));
   let projectPath = null, created = Date.now();
-  if (project && refresh) { projectPath = join(job, SUB.project, basename(cur.path)); created = cur.created; }
+  if (project && refresh) { projectPath = join(state.dest, SUB.project, basename(cur.path)); created = cur.created; }
   else if (project) {
     const base = variationFile(name, tl, created).replace(/\.bumpmesh$/, '');
-    projectPath = join(job, SUB.project, `${base}.bumpmesh`);
+    projectPath = join(state.dest, SUB.project, `${base}.bumpmesh`);
     // Two variations in the same minute must not collide.
-    for (let k = 2; (await exists(projectPath)).exists; k++) projectPath = join(job, SUB.project, `${base} (${k}).bumpmesh`);
+    for (let k = 2; (await exists(projectPath)).exists; k++) projectPath = join(state.dest, SUB.project, `${base} (${k}).bumpmesh`);
   }
-  const sharedPath = join(job, SUB.project, SHARED_FILE);
+  const sharedPath = join(state.dest, SUB.project, SHARED_FILE);
   const origName = state.originalPath ? basename(state.originalPath) : null;
   const origTarget = origName ? join(job, SUB.original, origName) : null;
   const origAlreadyThere = !!(origTarget && state.originalPath.toLowerCase() === origTarget.toLowerCase());
@@ -1259,10 +1299,20 @@ async function runExport(app, { format, project, shared, originalMode, vary, var
       }
       await writeFile(r.target, caught[0].blob);
       written.push(r.target);
+      // Iso preview of this file, named like it, so the parts can be seen without opening them.
+      if (image) {
+        await new Promise(res => setTimeout(res, 100));   // preview settled (no rAF: it stalls in a background tab)
+        const png = await captureIsoImage(768);
+        if (png) {
+          const p = r.target.replace(/\.[^.\\]+$/, '.png');
+          await writeFile(p, png);
+          written.push(p);
+        }
+      }
       // Alongside it, the project with the settings that made it (a folder per run only).
       if (project && r.dir) {
         const zip = await app.buildProjectZip({ pds: { name: state.name, originalFile: origName, textures: app.textureNames(), align: state.align ? { ...state.align } : null } });
-        const p = r.target.replace(/\.[^.\\]+$/, '.bumpmesh');
+        const p = r.target.replace(/\\[^\\]+\\([^\\]+)\.[^.\\]+$/, '\\$1.bumpmesh');   // one level up, beside the run's folder
         await writeFile(p, new Blob([zip]));
         written.push(p);
       }
@@ -1334,11 +1384,12 @@ function initExportButton(app) {
     const b = document.getElementById(id);
     if (b) b.style.display = 'none';
   }
-  const btn = el('button', { class: 'export-btn', id: 'pds-export-btn', title: 'Export the textured model, the project, shared settings and the original into a folder' }, 'Export…');
+  const btn = el('button', { class: 'vp-btn', id: 'pds-export-btn', type: 'button', title: 'Export…', 'aria-label': 'Export', 'aria-haspopup': 'dialog' });
+  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   btn.addEventListener('click', () => exportDialog(app).catch(err => notice('Export failed', err.message)));
-  // Right after Preview Export (inside the export buttons row).
-  const preview = document.getElementById('preview-export-btn');
-  if (preview) preview.after(btn); else document.querySelector('.export-buttons')?.append(btn);
+  // Right of the settings gear, apart from the sidebar's model controls.
+  const gear = document.getElementById('pds-settings-btn');
+  if (gear) gear.after(btn); else document.getElementById('viewport-toolbar')?.append(btn);
   // Follow the hidden STL button's enabled state.
   const src = document.getElementById('export-btn');
   const sync = () => { btn.disabled = !!src?.disabled; };
@@ -1366,6 +1417,11 @@ export async function initPersonal(app) {
   if (v) v.textContent = `v${APP_VERSION} · ${EDITION}`;
   injectStyle();
   initColours(app);
+  app.setBakeColors(lsGet('bake-colors', '1') === '1');
+  document.getElementById('view-snap')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]');
+    if (b) setViewDirection(b.dataset.view);
+  });
   initSettingsMenu(app);
   if (!(await connect())) return; // plain web page: no local file features
   onLogoIcon((frames) => call('app-icon', { frames }));   // launcher/icon.ico in the theme colour
