@@ -26,6 +26,7 @@ import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMate
 import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { printZScale } from './displacement.js';
+import { buildProfile } from './profileV.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { buildAdjacency, bucketFill,
@@ -54,6 +55,23 @@ let currentBounds     = null;   // bounds of the original geometry
 // currentBounds.
 let _mapFrame         = null;
 function _mapBounds() { return _mapFrame || currentBounds; }
+
+// Spherical (Adaptive) measures V along the part's profile (profileV.js). The
+// grid is built from the loaded mesh the first time a layer uses that mode,
+// cached per mesh and projection centre, and rides on the bounds object so the
+// preview shader, the workers and computeUV all see it.
+const _profileCache = new WeakMap();
+function _attachProfile(b) {
+  if (!b) return b;
+  const used = layers.some((L, i) => (i === activeLayer ? settings : L.settings).mappingMode === 7);
+  if (!used || !currentGeometry) { b.profile = null; return b; }
+  let byCenter = _profileCache.get(currentGeometry);
+  if (!byCenter) _profileCache.set(currentGeometry, byCenter = new Map());
+  const key = `${b.center.x},${b.center.y},${b.center.z}`;
+  if (!byCenter.has(key)) byCenter.set(key, buildProfile(currentGeometry, b.center));
+  b.profile = byCenter.get(key);
+  return b;
+}
 // Forward rigid transform from the file's original coordinates to the in-app
 // (centered, possibly rotated) working space: mem = poseRot·orig + poseTrans.
 // Import centering, in-app rotation, and place-on-face all fold into it; the
@@ -1594,7 +1612,7 @@ function wireEvents() {
   // ── Settings ──
   mappingSelect.addEventListener('change', () => {
     settings.mappingMode = parseInt(mappingSelect.value, 10);
-    capAngleRow.style.display = (settings.mappingMode === 3 || settings.mappingMode === 7) ? '' : 'none';
+    capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
     updateCylinderUIVisibility();
     // The wrap circumference is mode-specific (cylinder vs sphere equator),
     // so entering a wrap mode with snapping on re-snaps the U scale.
@@ -3826,7 +3844,7 @@ async function handleModelFile(file, stepSettings = null) {
       if (idx >= 0) selectPreset(idx);
     }
     mappingSelect.value = String(settings.mappingMode);
-    capAngleRow.style.display = (settings.mappingMode === 3 || settings.mappingMode === 7) ? '' : 'none';
+    capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
 
     // Fresh model → reset cylinder axis to AABB defaults so the gizmo lands on
     // a sensible starting point. (Project snapshot restore overrides this
@@ -4151,7 +4169,7 @@ function applySmartResolution() {
   const effective = getEffectiveMapEntry() || activeMapEntry;
   const result = computeSmartResolution({
     geometry: currentGeometry,
-    bounds:   currentBounds,
+    bounds:   _attachProfile(currentBounds),
     settings,
     texture:  effective,
   });
@@ -4726,7 +4744,7 @@ function _regularizeOpts() {
 // come from _previewLayers).
 function _materialSettings(preview) {
   return {
-    bounds: _mapBounds(),
+    bounds: _attachProfile(_mapBounds()),
     bottomAngleLimit: settings.bottomAngleLimit,
     topAngleLimit:    settings.topAngleLimit,
     noDownwardZ:      settings.noDownwardZ,
@@ -5083,8 +5101,8 @@ async function handleExport(format = 'stl') {
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
       settings,
-      bounds: currentBounds,
-      mapBounds: _mapFrame,
+      bounds: _attachProfile(currentBounds),
+      mapBounds: _mapFrame ? _attachProfile(_mapFrame) : _mapFrame,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
     }, _onExportPipelineEvent, isStale);

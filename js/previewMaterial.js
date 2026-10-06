@@ -90,6 +90,29 @@ const sharedGLSL = /* glsl */`
   uniform int       useDisplacement;
   uniform float     printZScale;     // Z heights = printZScale × X/Y heights (1 = off)
 
+  // Spherical (Adaptive) profile grid (profileV.js): RGBA per cell = [V mm, weight].
+  uniform sampler2D profileTex;
+  uniform float     profileOn;
+  uniform vec4      profileDims;     // nr, nz, cell (mm), zMin (mm, relative to centre)
+
+  // Weighted bilinear lookup; mirrors sampleProfile in profileV.js.
+  float profileV(float rho, float z) {
+    float fx = clamp(rho / profileDims.z - 0.5, 0.0, profileDims.x - 1.0);
+    float fy = clamp((z - profileDims.w) / profileDims.z - 0.5, 0.0, profileDims.y - 1.0);
+    float x0 = floor(fx), y0 = floor(fy);
+    float x1 = min(profileDims.x - 1.0, x0 + 1.0), y1 = min(profileDims.y - 1.0, y0 + 1.0);
+    float tx = fx - x0, ty = fy - y0;
+    vec2 inv = 1.0 / profileDims.xy;
+    vec2 a = texture2D(profileTex, (vec2(x0, y0) + 0.5) * inv).rg;
+    vec2 b = texture2D(profileTex, (vec2(x1, y0) + 0.5) * inv).rg;
+    vec2 c = texture2D(profileTex, (vec2(x0, y1) + 0.5) * inv).rg;
+    vec2 d = texture2D(profileTex, (vec2(x1, y1) + 0.5) * inv).rg;
+    float wa = (1.0 - tx) * (1.0 - ty) * a.g, wb = tx * (1.0 - ty) * b.g;
+    float wc = (1.0 - tx) * ty * c.g,         wd = tx * ty * d.g;
+    float sw = wa + wb + wc + wd;
+    return sw > 0.0 ? (a.r * wa + b.r * wb + c.r * wc + d.r * wd) / sw : 0.0;
+  }
+
   // Height scale on a surface with normal n — must match printZFactor in
   // displacement.js: 1 on a vertical wall, printZScale on a flat top/bottom.
   float printZFactor(vec3 n) {
@@ -231,50 +254,23 @@ const sharedGLSL = /* glsl */`
       return sampleMap(l, vec2(u_sph, v_sph));
 
     } else if (mappingMode == 7) {
-      // Spherical walls + flat top-down projection on up/down faces (mirror of
-      // MODE_SPHERICAL_FLAT in mapping.js).
-      float R = 0.5 * md;
-      float refU = TWO_PI * R;
-      float refV = PI * R;
-      float r     = length(rel);
-      float phi   = acos(clamp(rel.z / max(r, 1e-4), -1.0, 1.0));
+      // U = angle, V = distance along the part's profile (mirror of
+      // MODE_SPHERICAL_FLAT in mapping.js; profile grid built in profileV.js).
+      float refV = PI * 0.5 * md;
       float u_sph = atan(rel.y, rel.x) / TWO_PI + 0.5;
-      float v_sph = rel.z / refV + 0.5; // height in mm (matches mapping.js)
+      float v_sph = rel.z / refV + 0.5;
+      if (profileOn > 0.5) {
+        v_sph = (profileV(length(rel.xy), rel.z) - 0.5 * boundsSize.z) / refV + 0.5;
+      }
 
       float seamBand = seamBandWidth * 0.1;
       float seamDist = min(u_sph, 1.0 - u_sph);
-      float hSide;
       if (seamBand > 0.001 && seamDist < seamBand) {
         float d = u_sph < 0.5 ? u_sph : u_sph - 1.0;
         float t = smoothstep(0.0, 1.0, (d + seamBand) / (2.0 * seamBand));
-        hSide = mix(sampleMap(l, vec2(1.0 + d, v_sph)), sampleMap(l, vec2(d, v_sph)), t);
-      } else {
-        hSide = sampleMap(l, vec2(u_sph, v_sph));
+        return mix(sampleMap(l, vec2(1.0 + d, v_sph)), sampleMap(l, vec2(d, v_sph)), t);
       }
-
-      float capThreshold = cos(radians(layerCapAngle[l]));
-      float blendHalf = seamBandWidth * 0.5;
-      // Upper edge capped below 1 so a flat face gets full cap weight; the wall
-      // mapping is constant along each ray on a flat top and would otherwise
-      // leave straight radial lines. Matches mapping.js.
-      float capW = smoothstep(capThreshold - blendHalf, min(capThreshold + blendHalf, 0.995), abs(blendN.z));
-      if (capW <= 0.0) return hSide;
-      // Polar cap: U = angle, V = radial distance from the axis in mm, counted
-      // from the pole (matches MODE_SPHERICAL_FLAT in mapping.js).
-      float rho = length(rel.xy);
-      // Up/down from the smooth model normal, not projN: projN is rebuilt from
-      // derivatives of the displaced surface and flips sign on steep relief
-      // facets, which drew straight lines out from the centre.
-      float vCap = blendN.z < 0.0 ? 1.0 - rho / refV : rho / refV;
-      float hCap;
-      if (seamBand > 0.001 && seamDist < seamBand) {
-        float d = u_sph < 0.5 ? u_sph : u_sph - 1.0;
-        float t = smoothstep(0.0, 1.0, (d + seamBand) / (2.0 * seamBand));
-        hCap = mix(sampleMap(l, vec2(1.0 + d, vCap)), sampleMap(l, vec2(d, vCap)), t);
-      } else {
-        hCap = sampleMap(l, vec2(u_sph, vCap));
-      }
-      return mix(hSide, hCap, capW);
+      return sampleMap(l, vec2(u_sph, v_sph));
 
     } else if (mappingMode == 5) {
       vec3 blend = abs(projN);
@@ -675,6 +671,12 @@ export function updateMaterial(material, layers, settings) {
   u.noDownwardZ.value      = settings.noDownwardZ      ? 1 : 0;
   u.useDisplacement.value  = settings.useDisplacement  ? 1 : 0;
   u.printZScale.value      = settings.printZScale      ?? 1;
+  const prof = b.profile || null;
+  u.profileOn.value = prof ? 1 : 0;
+  if (prof) {
+    u.profileTex.value = _profileTexture(prof);
+    u.profileDims.value.set(prof.nr, prof.nz, prof.cell, prof.zMin);
+  }
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
@@ -715,6 +717,9 @@ function buildUniforms() {
     noDownwardZ:      { value: 0 },
     useDisplacement:  { value: 0 },
     printZScale:      { value: 1 },
+    profileTex:       { value: createFallbackDataTexture() },
+    profileOn:        { value: 0 },
+    profileDims:      { value: new THREE.Vector4(1, 1, 1, 0) },
     boundaryEdgeTex:      { value: createFallbackDataTexture() },
     boundaryEdgeCount:    { value: 0 },
     boundaryEdgeTexWidth: { value: 1.0 },
@@ -743,6 +748,20 @@ function _fallbackTexture() {
   const t = new THREE.CanvasTexture(canvas);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   _fallback = t;
+  return t;
+}
+
+// One float texture per profile grid (profileV.js), made on first use.
+const _profileTextures = new WeakMap();
+function _profileTexture(prof) {
+  let t = _profileTextures.get(prof);
+  if (!t) {
+    t = new THREE.DataTexture(prof.data, prof.nr, prof.nz, THREE.RGBAFormat, THREE.FloatType);
+    t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.NearestFilter;
+    t.needsUpdate = true;
+    _profileTextures.set(prof, t);
+  }
   return t;
 }
 

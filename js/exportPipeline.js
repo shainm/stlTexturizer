@@ -72,6 +72,7 @@ function reviveBounds(b) {
   const v = (o) => new THREE.Vector3(o.x, o.y, o.z);
   const r = { min: v(b.min), max: v(b.max), size: v(b.size), center: v(b.center) };
   if (b.modular) r.modular = { ...b.modular }; // modular stacking frame (mapping.js)
+  if (b.profile) r.profile = b.profile;         // Spherical (Adaptive) profile grid (profileV.js)
   return r;
 }
 
