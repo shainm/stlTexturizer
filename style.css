@@ -604,19 +604,6 @@ main.sidebar-collapsed .gallery-panel { display: none; }
   margin-top: 6px;
 }
 
-.bake-mask-row {
-  margin-bottom: 10px;
-}
-
-.bake-mask-row .checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-}
-
 /* ── Preset grid (favourites, 4 wide, grows by rows) ─────────────────── */
 .preset-grid {
   display: grid;

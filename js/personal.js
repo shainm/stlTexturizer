@@ -1022,7 +1022,7 @@ function initExportButton(app) {
   }
   const btn = el('button', { class: 'export-btn', id: 'pds-export-btn', title: 'Export the textured model, the project, shared settings and the original into a folder' }, 'Export…');
   btn.addEventListener('click', () => exportDialog(app).catch(err => notice('Export failed', err.message)));
-  // Right after Preview Export (the first .export-buttons row is Bake's).
+  // Right after Preview Export (inside the export buttons row).
   const preview = document.getElementById('preview-export-btn');
   if (preview) preview.after(btn); else document.querySelector('.export-buttons')?.append(btn);
   // Follow the hidden STL button's enabled state.

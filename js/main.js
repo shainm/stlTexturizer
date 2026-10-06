@@ -68,7 +68,6 @@ let activeMapEntry    = null;   // { name, texture, imageData, width, height, is
 let _lastCustomMap    = null;   // most recent uploaded/imported custom-map entry, kept across preset switches so the thumbnail can re-activate it
 let previewMaterial   = null;
 let isExporting       = false;
-let isBaking          = false;
 let smoothBottomAutoOff = false; // Smooth Bottom was switched off by Bottom faces = 0 (#126), see syncSmoothBottomToLimit
 let previewDebounce   = null;
 
@@ -352,12 +351,6 @@ const exportProgBar    = document.getElementById('export-progress-bar');
 const exportProgPct    = document.getElementById('export-progress-pct');
 const exportProgLbl    = document.getElementById('export-progress-label');
 const triLimitWarning  = document.getElementById('tri-limit-warning');
-const bakeBtn          = document.getElementById('bake-btn');
-const bakeMaskChk      = document.getElementById('bake-mask-chk');
-const bakeProgress     = document.getElementById('bake-progress');
-const bakeProgBar      = document.getElementById('bake-progress-bar');
-const bakeProgPct      = document.getElementById('bake-progress-pct');
-const bakeProgLbl      = document.getElementById('bake-progress-label');
 const advancedSection  = document.getElementById('advanced-section');
 const advancedToggle   = document.getElementById('advanced-toggle');
 const wireframeToggle  = document.getElementById('wireframe-toggle');
@@ -1775,7 +1768,7 @@ function wireEvents() {
   preserveUntexturedChk.checked = settings.preserveUntextured;
   preserveUntexturedChk.addEventListener('change', () => {
     settings.preserveUntextured = preserveUntexturedChk.checked;
-    // Export/bake-time flag only — no preview rebuild needed.
+    // Export-time flag only — no preview rebuild needed.
   });
 
   dispPreviewToggle.addEventListener('change', () => {
@@ -1873,11 +1866,10 @@ function wireEvents() {
     handleExport('preview');
   });
 
-  // ── Advanced / Beta Features panel: collapse toggle + bake action ──
+  // ── Advanced / Beta Features panel: collapse toggle ──
   advancedToggle.addEventListener('click', () => {
     advancedSection.classList.toggle('collapsed');
   });
-  bakeBtn.addEventListener('click', bakeTextures);
 
   // ── Texture layers ──
   if (layerAddBtn) layerAddBtn.addEventListener('click', _addLayer);
@@ -2789,7 +2781,7 @@ function _unionFaceWeights(hardFlags, geometry, withAngle) {
 }
 
 /**
- * Inputs for the export/bake pipeline. The mesh is the flattened paint tree
+ * Inputs for the export pipeline. The mesh is the flattened paint tree
  * (the base mesh when no face is split). One visible layer that is the
  * active one, on an unsplit mesh, goes through the original single-texture
  * path unchanged; anything else becomes the layered path (exportPipeline.js
@@ -3215,7 +3207,6 @@ function handlePlaceOnFaceClick(e) {
   exportBtn.disabled = !_hasTexturedLayer();
   export3mfBtn.disabled = !_hasTexturedLayer();
   previewExportBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
   updateSmartResBtnState();
   updatePreview();
 
@@ -3698,7 +3689,6 @@ function loadDefaultCube() {
   exportBtn.disabled = !_hasTexturedLayer();
   export3mfBtn.disabled = !_hasTexturedLayer();
   previewExportBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
   updateSmartResBtnState();
   updatePreview();
 }
@@ -4631,7 +4621,7 @@ const EFFECTIVE_MAP_CACHE_MAX = MAX_LAYERS + 2;
 
 /**
  * A map entry with `textureSmoothing` (px of a 512 px map) and `invert`
- * applied — the pixels BOTH the GPU preview and the CPU bake/export consume.
+ * applied — the pixels BOTH the GPU preview and the CPU export consume.
  * Returns the raw entry when nothing needs processing, null for no map.
  */
 function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
@@ -4679,14 +4669,14 @@ function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
   const imageData = ctx.getImageData(0, 0, width, height);
   if (invert) {
     // Invert the height map itself; amplitude still controls push/pull direction.
-    // Both the GPU preview and CPU bake/export consume these same pixels.
+    // Both the GPU preview and CPU export consume these same pixels.
     const pixels = imageData.data;
     for (let i = 0; i < pixels.length; i += 4) {
       pixels[i]     = 255 - pixels[i];
       pixels[i + 1] = 255 - pixels[i + 1];
       pixels[i + 2] = 255 - pixels[i + 2];
       // Height sampling ignores alpha. Keep the processed map opaque so
-      // Canvas2D preserves the same RGB values used by CPU bake/export.
+      // Canvas2D preserves the same RGB values used by CPU export.
       pixels[i + 3] = 255;
     }
     ctx.putImageData(imageData, 0, 0);
@@ -4713,7 +4703,7 @@ function _effectiveMapFor(mapEntry, textureSmoothing, invert) {
 }
 
 // Build the regularize.js opts object from current settings.  Centralised so
-// preview / export / bake stay in sync with the Advanced-panel debug knobs.
+// preview / export stay in sync with the Advanced-panel debug knobs.
 function _regularizeOpts() {
   return {
     aspectThreshold:           settings.regularizeAspectThreshold,
@@ -4776,7 +4766,6 @@ function updatePreview() {
     exportBtn.disabled = true;
     export3mfBtn.disabled = true;
     previewExportBtn.disabled = true;
-    bakeBtn.disabled = true;
     updateSmartResBtnState();
     _renderLayerStrip();
     return;
@@ -4801,7 +4790,6 @@ function updatePreview() {
   exportBtn.disabled = false;
   export3mfBtn.disabled = false;
   previewExportBtn.disabled = false;
-  bakeBtn.disabled = isBaking;
   updateSmartResBtnState();
   _renderLayerStrip();
 }
@@ -5053,7 +5041,7 @@ function _restoreOriginalPose(positions, normals = null) {
 }
 
 async function handleExport(format = 'stl') {
-  if (!currentGeometry || !_hasTexturedLayer() || isExporting || isBaking) return;
+  if (!currentGeometry || !_hasTexturedLayer() || isExporting) return;
   const myToken = ++exportToken;
   isExporting = true;
   exportBtn.classList.add('busy');
@@ -5252,34 +5240,8 @@ function _onExportPipelineEvent(stage, p, info) {
   }
 }
 
-function _onBakePipelineEvent(stage, p, info) {
-  switch (stage) {
-    case 'subdivide1': {
-      const label = info && info.triCount != null
-        ? t('progress.refining', { cur: info.triCount.toLocaleString(), edge: info.longestEdge.toFixed(2) })
-        : t('progress.subdividing');
-      setBakeProgress(0.02 + p * 0.34, label);
-      break;
-    }
-    case 'regularize':
-      setBakeProgress(0.36, t('progress.regularizing'));
-      break;
-    case 'subdivide2': {
-      const label = info && info.triCount != null
-        ? t('progress.refining', { cur: info.triCount.toLocaleString(), edge: info.longestEdge.toFixed(2) })
-        : t('progress.subdividing');
-      setBakeProgress(0.38 + p * 0.09, label);
-      break;
-    }
-    case 'displace':
-      if (p === 0) setBakeProgress(0.47, t('progress.applyingDisplacement', { n: info.triCount.toLocaleString() }));
-      else setBakeProgress(0.47 + p * 0.40, t('progress.displacingVertices'));
-      break;
-  }
-}
-
 // ── Export worker management ─────────────────────────────────────────────────
-// One persistent module worker runs the export/bake pipeline off the main
+// One persistent module worker runs the export pipeline off the main
 // thread. If it can't initialise (very old browser, CDN unreachable from the
 // worker) the pipeline runs inline exactly as before — same module, same code.
 
@@ -5426,258 +5388,6 @@ function setProgress(fraction, label) {
 // Snaps every vertex within `tol` of the bottom plane onto it, so the bed-
 // contact surface comes out perfectly flat — implementation lives in
 // exportPipeline.js (snapBottomToFlat) so it runs inside the worker.
-
-function setBakeProgress(fraction, label) {
-  const pct = Math.round(fraction * 100);
-  bakeProgBar.style.width = `${pct}%`;
-  bakeProgPct.textContent = `${pct}%`;
-  bakeProgLbl.textContent = label;
-}
-
-// ── Bake Textures (beta) ─────────────────────────────────────────────────────
-// Apply the current displacement texture to currentGeometry and adopt the
-// result as the working model so the user can keep editing on the textured
-// mesh. By default, masks the just-baked faces in the new exclusion set.
-//
-// Pipeline: subdivide → applyDisplacement → (optional) flat-bottom clamp.
-// Decimation is intentionally skipped — decimate() drops the per-face parent
-// mapping needed to translate "which input faces were textured" into the new
-// mesh's triangle indices. Final decimation still happens on Export.
-async function bakeTextures() {
-  if (!currentGeometry || !_hasTexturedLayer() || isBaking || isExporting) return;
-  isBaking = true;
-  bakeBtn.classList.add('busy');
-  bakeBtn.disabled = true;
-  bakeProgress.classList.remove('hidden');
-
-  let displaced  = null;
-  let succeeded  = false;
-
-  try {
-    setBakeProgress(0.02, t('progress.subdividing'));
-    await yieldFrame();
-
-    // Mirror handleExport's pre-flight: combine user mask + angle masking
-    // into per-vertex weights for subdivision, plus soft-brush paint (or the
-    // per-layer masks when several layers are visible).
-    const inputs = _pipelineInputs();
-    const faceWeights = inputs.faceWeights;
-    // Faces an EARLIER bake textured (per face of the current model). They
-    // are masked this round, so "textured this round" alone would drop them
-    // from the new mask - a second bake lost the first one's faces. When the
-    // brush has refined the mesh, the bake runs on its flattened triangles;
-    // map those back to the model's faces.
-    const prevBaked = currentGeometry.userData.bakedFaces || null;
-    const inputToBase = inputs.positions !== currentGeometry.attributes.position.array
-      ? paintFlat.faceParentId : null;
-
-    // Run the bake pipeline (subdivide → regularize → displace → bottom
-    // snaps; no decimation — it would drop the per-face parent mapping needed
-    // to remap user exclusions onto the baked output). Worker-first with
-    // inline fallback, same as handleExport.
-    const result = await runPipeline({
-      positions: inputs.positions,
-      faceWeights,
-      softExclude: inputs.softExclude,
-      imageData: inputs.imageData,
-      imgWidth: inputs.imgWidth,
-      imgHeight: inputs.imgHeight,
-      layers: inputs.layers,
-      settings,
-      bounds: currentBounds,
-      mapBounds: _mapFrame,
-      regularizeOpts: _regularizeOpts(),
-      mode: 'bake',
-    }, _onBakePipelineEvent, () => false);
-    if (!result) throw new Error('bake pipeline aborted');
-
-    const faceParentId = result.faceParentId;
-    displaced = new THREE.BufferGeometry();
-    displaced.setAttribute('position', new THREE.BufferAttribute(result.positions, 3));
-    if (result.normals) displaced.setAttribute('normal', new THREE.BufferAttribute(result.normals, 3));
-
-    setBakeProgress(0.90, t('progress.finalizing'));
-    await yieldFrame();
-
-    // Build the new exclusion set: every output triangle whose parent face
-    // was NOT excluded (by user paint, selectionMode, or angle masking) got
-    // textured this round → mask it on the new mesh so a follow-up texture
-    // pass won't double-up. faceWeights[parentIdx*3] > 0.99 captures all
-    // three exclusion paths in a single check (it's the same predicate
-    // subdivide uses to skip subdividing those faces).
-    // Baked = textured this round OR baked by an earlier round; the mask is
-    // seeded with all of them, and the flags ride on the new geometry for
-    // the next bake.
-    const wasParentExcluded = faceWeights
-      ? (parentIdx) => faceWeights[parentIdx * 3] > 0.99
-      : () => false; // no exclusions at all → every face was textured
-    const bakedFaces = new Uint8Array(faceParentId.length);
-    for (let i = 0; i < faceParentId.length; i++) {
-      const p = faceParentId[i];
-      const base = inputToBase ? inputToBase[p] : p;
-      if (!wasParentExcluded(p) || (prevBaked && prevBaked[base])) bakedFaces[i] = 1;
-    }
-    let preExcluded = null;
-    if (bakeMaskChk.checked) {
-      preExcluded = [];
-      for (let i = 0; i < bakedFaces.length; i++) if (bakedFaces[i]) preExcluded.push(i);
-    }
-    displaced.userData.bakedFaces = bakedFaces;
-
-    // Compute new bounds from the displaced geometry. Do NOT re-center —
-    // the displaced mesh is approximately at the same location, and
-    // re-centering would shift the user's frame of reference.
-    displaced.computeBoundingBox();
-    const bb = displaced.boundingBox;
-    const newBounds = {
-      min:    bb.min.clone(),
-      max:    bb.max.clone(),
-      size:   new THREE.Vector3().subVectors(bb.max, bb.min),
-      center: new THREE.Vector3().addVectors(bb.min, bb.max).multiplyScalar(0.5),
-    };
-
-    adoptBakedGeometry(displaced, newBounds, { preExcludedFaces: preExcluded });
-    displaced = null; // ownership transferred to currentGeometry
-
-    succeeded = true;
-    setBakeProgress(1.0, t('progress.done'));
-    setTimeout(() => { bakeProgress.classList.add('hidden'); setBakeProgress(0, ''); }, 1200);
-  } catch (err) {
-    console.error('Bake failed:', err);
-    if (/maximum size|out of memory|alloc/i.test(err.message)) {
-      alert(t('alerts.exportOOM'));
-    } else {
-      alert(t('alerts.bakeFailed', { msg: err.message }));
-    }
-  } finally {
-    if (displaced) displaced.dispose();
-    if (!succeeded) bakeProgress.classList.add('hidden');
-    isBaking = false;
-    bakeBtn.classList.remove('busy');
-    bakeBtn.disabled = !_hasTexturedLayer();
-  }
-}
-
-// Replace currentGeometry with `geometry` and reset per-model state without
-// touching the user's texture/settings. Mirrors the relevant subset of
-// handleModelFile but keeps activeMapEntry, settings, and refineLength as-is,
-// and seeds the exclusion paint from opts.preExcludedFaces.
-function adoptBakedGeometry(geometry, bounds, opts = {}) {
-  // Invalidate any in-flight async operations tied to the previous mesh.
-  cancelDisplacementPreviewBuild();
-  exportToken++;
-  diagToken++;
-
-  // Dispose the previous working geometry so we don't leak GPU buffers. Note
-  // that it's still referenced by previewMaterial/loadGeometry until we swap
-  // those — but loadGeometry below replaces the visible mesh, and Three's
-  // BufferGeometry.dispose() only frees GPU resources (CPU arrays remain
-  // valid for any code that still holds the reference).
-  if (currentGeometry && currentGeometry !== geometry) currentGeometry.dispose();
-
-  currentGeometry = geometry;
-  currentBounds   = bounds;
-  _mapFrame = null; // a shared texture frame belongs to the model it was made for
-  currentStlName  = `${currentStlName}_baked`;
-  checkAmplitudeWarning();
-
-  geometry = currentGeometry;
-
-  // Dispose preview material so updatePreview rebuilds it on the new mesh.
-  if (previewMaterial) {
-    previewMaterial.dispose();
-    previewMaterial = null;
-  }
-
-  // Replace the visible mesh in the viewer.
-  loadGeometry(geometry);
-
-  // Reset displacement preview — its geometry referenced the pre-bake mesh.
-  if (dispPreviewGeometry) { dispPreviewGeometry.dispose(); dispPreviewGeometry = null; }
-  settings.useDisplacement = false;
-  dispPreviewToggle.checked = false;
-
-  // Reset mesh diagnostics — they referenced the pre-bake mesh.
-  meshDiagnostics.classList.add('hidden');
-  meshDiagAdvanced.classList.add('hidden');
-  lastFastDiag = null;
-  lastAdvancedDiag = null;
-  clearDiagHighlight();
-
-  // The seeded mask carries exclude-mode semantics ("don't re-texture these
-  // faces"). If the user was in include-only mode pre-bake, that mode would
-  // invert the meaning to "only texture these faces" — exactly backwards. So
-  // force exclude mode (the old paint is gone with the old mesh anyway).
-  _dropPaintGeometry();
-  paintTree = null;
-  if (selectionMode) setSelectionMode(false, { clear: false });
-
-  // The bake flattened every layer into the geometry: continue with a single
-  // fresh layer that keeps the active layer's texture and settings.
-  layers = [_newLayer()];
-  activeLayer = 0;
-  _renderLayerStrip();
-
-  // Exit any active painting/place/rotate modes.
-  exclusionTool = null;
-  eraseMode     = false;
-  isPainting    = false;
-  if (placeOnFaceActive) togglePlaceOnFace(false);
-  if (rotateActive) toggleRotateMode(false);
-  rotateAngles = { x: 0, y: 0, z: 0 };
-  rotateXInput.value = '0'; rotateYInput.value = '0'; rotateZInput.value = '0';
-  exclBrushBtn.classList.remove('active');
-  exclBucketBtn.classList.remove('active');
-  exclBrushTypeRow.classList.add('hidden');
-  exclBrushModeRow.classList.add('hidden');
-  exclRadiusRow.classList.add('hidden');
-  exclHardnessRow.classList.add('hidden');
-  exclThresholdRow.classList.add('hidden');
-  canvas.style.cursor = '';
-  setHoverPreview(null);
-  _lastHoverTriIdx = -1;
-
-  // Build adjacency for the new geometry (needed by brush/bucket tools and
-  // by the exclusion overlay).
-  const adjData = buildAdjacency(geometry);
-  triangleAdjacency = adjData.adjacency;
-  triangleCentroids = adjData.centroids;
-  triangleFaceNormals = adjData.faceNormals;
-  _createPaintTree(adjData);
-  updateMeshDiagnostics(adjData, geometry.attributes.position.count / 3);
-
-  // Seed the exclusion mask with the just-baked faces so a follow-up texture
-  // pass won't double up. Soft paint doesn't carry over: the baked faces it
-  // touched are in the seed.
-  const seed = opts.preExcludedFaces || [];
-  if (seed.length) paintTree.paintFaces(_activeSlot(), seed, false);
-  // A seeded post-bake mask means masking is actively in play (exclude mode
-  // was forced above); no seed = back to the neutral default.
-  maskModeChosen = seed.length > 0;
-  updateMaskModeButtons();
-  refreshExclusionOverlay();
-
-  // Update mesh info display.
-  triLimitWarning.classList.add('hidden');
-  const triCount = getTriangleCount(geometry);
-  const mb = ((geometry.attributes.position.array.byteLength) / 1024 / 1024).toFixed(2);
-  const sx = bounds.size.x.toFixed(2);
-  const sy = bounds.size.y.toFixed(2);
-  const sz = bounds.size.z.toFixed(2);
-  _setMeshInfo(triCount, mb, sx, sy, sz);
-
-  exportBtn.disabled = !_hasTexturedLayer();
-  export3mfBtn.disabled = !_hasTexturedLayer();
-  previewExportBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
-  updateSmartResBtnState();
-
-  updatePreview();
-
-  // Bake is a destructive transform — undo history references the pre-bake
-  // triangle set, so it's no longer meaningful.
-  _clearUndoStacks();
-}
 
 /** Yield to the browser event loop (for progress bar paints etc.). */
 function yieldFrame() {
@@ -6241,13 +5951,6 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
       const legacy = _legacyMaskOf(_activeSlot());
       if (legacy) zipFiles['mask.json'] = strToU8(JSON.stringify(legacy));
     }
-    // Faces earlier bakes textured (see bakeTextures), over model.stl's
-    // triangles, so a bake after reopening the project keeps them masked.
-    const baked = currentGeometry.userData.bakedFaces;
-    if (baked) {
-      zipFiles['baked.json'] = strToU8(JSON.stringify(_bakedFacesToJSON(baked)));
-      payload.baked = 'baked.json';
-    }
   }
   if (includeTexture) {
     const blob = await new Promise(r => customSource.fullCanvas.toBlob(r, 'image/png'));
@@ -6442,8 +6145,6 @@ async function importProject(file, opts = {}) {
       await _applyImportedTexture(unzipped, data);
       _renderLayerStrip();
     }
-    // The baked-face flags belong to the bundled model, like the paint.
-    if (loadMode === 'all') _restoreBakedFaces(unzipped, data);
 
     _autoSaveSettings();
   } finally {
@@ -6456,37 +6157,6 @@ async function importProject(file, opts = {}) {
       _commitUndoCapture();
     }
   }
-}
-
-/**
- * baked.json: which of model.stl's triangles earlier bakes textured, as
- * [start, length] runs (baked faces come in large connected patches).
- */
-function _bakedFacesToJSON(flags) {
-  const runs = [];
-  for (let i = 0; i < flags.length;) {
-    if (!flags[i]) { i++; continue; }
-    const start = i;
-    while (i < flags.length && flags[i]) i++;
-    runs.push(start, i - start);
-  }
-  return { version: 1, triCount: flags.length, runs };
-}
-
-/** Restore baked.json onto the just-loaded model (skipped if its triangles differ). */
-function _restoreBakedFaces(unzipped, data) {
-  if (!data?.baked || !unzipped[data.baked] || !currentGeometry) return;
-  try {
-    const j = JSON.parse(strFromU8(unzipped[data.baked]));
-    const n = currentGeometry.attributes.position.count / 3;
-    if (j.triCount !== n || !Array.isArray(j.runs)) {
-      console.warn('Saved baked faces do not match the loaded model');
-      return;
-    }
-    const flags = new Uint8Array(n);
-    for (let k = 0; k + 1 < j.runs.length; k += 2) flags.fill(1, j.runs[k], j.runs[k] + j.runs[k + 1]);
-    currentGeometry.userData.bakedFaces = flags;
-  } catch (err) { console.warn('Could not restore the baked faces:', err); }
 }
 
 /**
@@ -6827,7 +6497,7 @@ initPersonal({
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
   hasModel: () => !!currentGeometry,
-  canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting && !isBaking,
+  canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
     .map((L, i) => (L.visible ? _layerMapEntry(i) : null))
     .filter(Boolean)

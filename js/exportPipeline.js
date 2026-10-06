@@ -4,18 +4,18 @@
  */
 
 /**
- * exportPipeline.js — the heavy mesh pipeline behind Export and Bake,
+ * exportPipeline.js — the heavy mesh pipeline behind Export,
  * extracted from main.js so it can run EITHER on the main thread (fallback)
  * OR inside the export Web Worker (exportWorker.js). Pure data in/out: no
  * DOM, no i18n, no app state.
  *
- * Sequence (mirrors the old inline handleExport/bakeTextures exactly):
+ * Sequence (mirrors the old inline handleExport exactly):
  *   subdivide → [regularize → re-subdivide] → displace
- *   → [flushToUntextured]        (export mode, settings.extendUntextured)
- *   → [decimate]                 (export mode only)
+ *   → [flushToUntextured]        (settings.extendUntextured)
+ *   → [decimate]                 (over the triangle target / harvestFlatFaces)
  *   → bottom clamp → smooth bottom
- *   → [resolveTJunctions]        (export mode, when decimation ran)
- *   → [stitchPreserved]          (export mode, preserveUntextured: the
+ *   → [resolveTJunctions]        (when decimation ran)
+ *   → [stitchPreserved]          (preserveUntextured: the
  *                                 untextured source triangles go back in
  *                                 verbatim, see preserveStitch.js)
  *
@@ -40,7 +40,6 @@
  *   settings      plain settings snapshot (structured-clone safe)
  *   bounds        {min,max,size,center} as {x,y,z} objects or Vector3s
  *   regularizeOpts  opts object for regularizeMesh
- *   mode          'export' | 'bake'
  * @param {function} [onEvent]  (stage, p, info) progress events; the caller
  *   maps stages to progress-bar fractions and translated labels.
  * @param {function} [shouldAbort]  checked between stages; true → return null.
@@ -48,9 +47,8 @@
  *   positions: Float32Array, normals: Float32Array|null,
  *   safetyCapHit: boolean, runDecimation: boolean, needsDecimation: boolean,
  *   lockedOverBudget: boolean,  // preserve-untextured beta: locked faces ≥ triangle target
- *   faceParentId: Int32Array|null,   // bake mode only
- *   repairStats: object|null,        // export mode, when repair ran
- *   preserveStats: object|null,      // export mode, when the stitch ran
+ *   repairStats: object|null,        // when repair ran
+ *   preserveStats: object|null,      // when the stitch ran
  * }>}
  */
 
@@ -223,7 +221,6 @@ export function snapBottomToFlat(geometry, bottomZ, tol = 0.1, pinned = null) {
 
 export async function runExportPipeline(input, onEvent = () => {}, shouldAbort = () => false) {
   const { settings, regularizeOpts } = input;
-  const mode = input.mode === 'bake' ? 'bake' : 'export';
   const bounds = reviveBounds(input.bounds);
   // Texture frame (optional): where the texture is laid out. The bed and the
   // bottom clamps always use the model's own bounds.
@@ -235,10 +232,9 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
 
   // Don't modify untextured surfaces: keep a verbatim copy of the untextured
   // source triangles (same > 0.99 test subdivision uses) for the final stitch,
-  // and their corners so Smooth Bottom leaves them alone. Export mode only —
-  // bake returns a parent-face map the stitch would invalidate.
+  // and their corners so Smooth Bottom leaves them alone.
   let keptPos = null, keptCorners = null;
-  if (mode === 'export' && settings.preserveUntextured && input.faceWeights) {
+  if (settings.preserveUntextured && input.faceWeights) {
     const fw = input.faceWeights, src = input.positions, triN = fw.length / 3;
     let n = 0;
     for (let t = 0; t < triN; t++) if (fw[t * 3] > 0.99) n++;
@@ -275,9 +271,9 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     if (shouldAbort()) return null;
 
     // Soft-brush paint (and every layer's mask) reaches the refined mesh
-    // through the parent-face map, so it needs real parents in export mode too.
+    // through the parent-face map, so it needs real parents.
     const layers = Array.isArray(input.layers) && input.layers.length ? input.layers : null;
-    const trackParents = mode === 'bake' || !!input.softExclude || !!layers;
+    const trackParents = !!input.softExclude || !!layers;
 
     // Regularize sub-slivers, then re-subdivide stretched edges. Skipped when
     // the Advanced toggle is off. Without parent tracking a zero parent map
@@ -373,9 +369,8 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     // past the plane of a flat untextured face, and that face continued out
     // to meet the texture (on the bed: the wall stands on it). The strip
     // triangles it adds are locked so decimation can't fold them back.
-    // Export only — bake keeps a parent-face map the extra triangles lack.
     let flushStats = null;
-    if (settings.extendUntextured && mode === 'export') {
+    if (settings.extendUntextured) {
       const ew = subdivided.attributes.excludeWeight;
       // Tops/bottoms may be printZScale x taller (3D Print Settings).
       const amp = Math.abs(settings.amplitude ?? 1) * (settings.symmetricDisplacement ? 0.5 : 1)
@@ -409,10 +404,9 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     const needsDecimation = dispTriCount > settings.maxTriangles;
     finalGeometry = displaced;
 
-    // Decimation runs only in export mode (bake keeps the parent-face map,
-    // which decimate drops): when over the target OR when flat-face harvesting
+    // Decimation runs when over the target OR when flat-face harvesting
     // alone is wanted.
-    const runDecimation = mode === 'export' && (needsDecimation || settings.harvestFlatFaces);
+    const runDecimation = needsDecimation || settings.harvestFlatFaces;
     let lockedOverBudget = false;
     if (runDecimation) {
       onEvent('decimate', 0, { from: dispTriCount, needsDecimation });
@@ -507,7 +501,6 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
       lockedOverBudget,
       runDecimation,
       needsDecimation,
-      faceParentId: mode === 'bake' ? faceParentId : null,
       repairStats,
       preserveStats,
       flushStats,

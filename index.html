@@ -14,7 +14,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="BumpMesh" />
   <meta property="og:title" content="BumpMesh by CNC Kitchen" />
-  <meta property="og:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
+  <meta property="og:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, and export printable textured meshes locally." />
   <meta property="og:url" content="https://bumpmesh.com/" />
   <meta property="og:image" content="https://bumpmesh.com/assets/preview.jpg" />
   <meta property="og:image:secure_url" content="https://bumpmesh.com/assets/preview.jpg" />
@@ -24,7 +24,7 @@
   <meta property="og:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="BumpMesh by CNC Kitchen" />
-  <meta name="twitter:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
+  <meta name="twitter:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, and export printable textured meshes locally." />
   <meta name="twitter:image" content="https://bumpmesh.com/assets/preview.jpg" />
   <meta name="twitter:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
   <link rel="icon" type="image/svg+xml" href="logo.svg" />
@@ -184,11 +184,6 @@
           <h4 class="pds-beta-name" data-i18n="ui.harvestFlatHeading">Harvest Flat Faces</h4>
           <p class="pds-hint" data-i18n="ui.harvestFlatDesc">When decimation reaches the triangle limit there are often still flat faces left that cost almost nothing to remove. With this on, decimation keeps collapsing them past the limit — as long as each collapse moves the surface less than the tolerance below — saving extra triangles without losing visible detail.</p>
           <p class="pds-beta-where">In Export, under Output Triangles.</p>
-        </div>
-        <div class="pds-beta-item" id="pds-beta-bake">
-          <h4 class="pds-beta-name" data-i18n="ui.bakeTexturesHeading">Bake Textures</h4>
-          <p class="pds-hint" data-i18n="ui.bakeTexturesDesc">Apply the current texture to the mesh and reload the result as the working model so you can keep editing.</p>
-          <p class="pds-beta-where">In Export, under the export buttons.</p>
         </div>
       </section>
 
@@ -777,27 +772,6 @@
           <button id="export-btn" class="export-btn" disabled data-i18n="ui.exportStl" data-i18n-title="tooltips.exportStl" title="Widely compatible with all slicers">Export STL</button>
           <button id="preview-export-btn" class="export-btn" disabled data-i18n="ui.previewExport" data-i18n-title="tooltips.previewExport" title="Show the exported mesh in the viewer, including steps the live preview can't show">Preview Export</button>
           <button id="export-3mf-btn" class="export-btn" disabled data-i18n="ui.export3mf" data-i18n-title="tooltips.export3mf" title="Smaller file size — may not be accepted by all slicers">Export 3MF</button>
-        </div>
-
-        <h3 class="panel-subsection-heading">Bake Textures <button type="button" class="beta-badge" data-beta="bake" title="Beta: what it does is in Settings &gt; Beta features">Beta</button></h3>
-        <div class="form-row bake-mask-row">
-          <label class="checkbox-label" for="bake-mask-chk">
-            <input type="checkbox" id="bake-mask-chk" checked />
-            <span data-i18n="ui.bakeMaskNewFaces">Mask just-baked faces from further texturing</span>
-          </label>
-        </div>
-        <div id="bake-progress" class="export-progress hidden">
-          <div class="export-progress-track">
-            <div id="bake-progress-bar" class="export-progress-bar"></div>
-            <span id="bake-progress-pct" class="export-progress-pct"></span>
-          </div>
-          <span id="bake-progress-label" data-i18n="progress.processing">Processing…</span>
-        </div>
-        <div class="export-buttons">
-          <button id="bake-btn" class="export-btn" disabled
-                  data-i18n="ui.bakeTextures"
-                  data-i18n-title="tooltips.bakeTextures"
-                  title="Apply the current texture to the mesh and reload the result as the working model.">Bake Textures</button>
         </div>
       </section>
 

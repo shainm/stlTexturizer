@@ -4,7 +4,7 @@
  */
 
 /**
- * exportWorker.js — dedicated module-worker entry for the export/bake mesh
+ * exportWorker.js — dedicated module-worker entry for the export mesh
  * pipeline. Keeps the multi-second subdivide/displace/decimate work off the
  * UI thread, and — because workers aren't subject to background-tab timer
  * throttling the way the page is — a backgrounded tab no longer stretches a

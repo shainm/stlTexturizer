@@ -27,9 +27,6 @@
  *
  * The caller compares edge defects before and after and keeps the unstitched
  * mesh if the stitch made things worse (stats.failed).
- *
- * Bake mode does not stitch: it needs the parent-face map, which a stitch
- * would invalidate.
  */
 
 import { QuantizedPointMap, IntPairMap } from './meshIndex.js';
