@@ -1027,7 +1027,99 @@ export function isSoftwareRendering() {
 
 export function requestRender() { _needsRender = true; }
 
-export function getRenderer()  { return renderer; }
+// Personal: standard views. Directions are from the model towards the camera (Z up,
+// front = looking along +Y). Top/bottom sit a hair off the pole so the camera's up
+// vector stays Z and orbiting afterwards behaves.
+const _VIEW_DIRS = {
+  front:  [0, -1, 0],
+  back:   [0, 1, 0],
+  left:   [-1, 0, 0],
+  right:  [1, 0, 0],
+  top:    [0, -Math.sin(_POLAR_EPS), Math.cos(_POLAR_EPS)],
+  bottom: [0, -Math.sin(_POLAR_EPS), -Math.cos(_POLAR_EPS)],
+  iso:    [0.6, -1.2, 0.8],
+};
+export const VIEW_NAMES = Object.keys(_VIEW_DIRS);
+
+/** Snap the camera to a standard view around the orbit target, keeping the distance and zoom. */
+export function setViewDirection(name) {
+  const d = _VIEW_DIRS[name];
+  if (!d || !camera) return;
+  const dir = new THREE.Vector3(...d).normalize();
+  const dist = Math.max(camera.position.distanceTo(controls.target), 1e-3);
+  camera.up.set(0, 0, 1);
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  camera.lookAt(controls.target);
+  controls.update();
+  requestRender();
+}
+
+/**
+ * Render the model in the iso view, filling the frame, and return it as a PNG blob.
+ * The live camera, size and view offset are put back afterwards.
+ * @param {number} [size] pixels, square
+ * @returns {Promise<Blob|null>}
+ */
+export async function captureIsoImage(size = 768) {
+  if (!currentMesh || !renderer) return null;
+  const geo = currentMesh.geometry;
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const sphere = geo.boundingSphere.clone().applyMatrix4(currentMesh.matrixWorld);
+
+  const saved = {
+    cam: camera, pos: camera.position.clone(), quat: camera.quaternion.clone(), up: camera.up.clone(),
+    zoom: camera.zoom, target: controls.target.clone(),
+    size: renderer.getSize(new THREE.Vector2()), ratio: renderer.getPixelRatio(),
+    ortho: { l: orthoCamera.left, r: orthoCamera.right, t: orthoCamera.top, b: orthoCamera.bottom },
+    aspect: perspCamera.aspect,
+  };
+  const hidden = [grid, axesGroup, dimensionGroup].filter(o => o && o.visible);
+  try {
+    for (const o of hidden) o.visible = false;
+    renderer.setPixelRatio(1);
+    renderer.setSize(size, size, false);
+    for (const cam of [orthoCamera, perspCamera]) cam.clearViewOffset();
+
+    const dir = new THREE.Vector3(...(_VIEW_DIRS.iso)).normalize();
+    const cam = camera;
+    cam.up.set(0, 0, 1);
+    if (cam === orthoCamera) {
+      const halfH = sphere.radius * 1.25;
+      cam.left = -halfH; cam.right = halfH; cam.top = halfH; cam.bottom = -halfH;
+      cam.zoom = 1;
+      cam.position.copy(sphere.center).addScaledVector(dir, sphere.radius * 4);
+    } else {
+      cam.aspect = 1;
+      const dist = sphere.radius * 1.25 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
+      cam.position.copy(sphere.center).addScaledVector(dir, dist);
+    }
+    cam.lookAt(sphere.center);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+
+    renderer.render(scene, cam);
+    // Copy while the drawing buffer is still valid (same task as the render).
+    const out = document.createElement('canvas');
+    out.width = out.height = size;
+    out.getContext('2d').drawImage(renderer.domElement, 0, 0, size, size);
+    return await new Promise(r => out.toBlob(r, 'image/png'));
+  } finally {
+    for (const o of hidden) o.visible = true;
+    renderer.setPixelRatio(saved.ratio);
+    Object.assign(orthoCamera, { left: saved.ortho.l, right: saved.ortho.r, top: saved.ortho.t, bottom: saved.ortho.b });
+    perspCamera.aspect = saved.aspect;
+    saved.cam.zoom = saved.zoom;
+    saved.cam.position.copy(saved.pos);
+    saved.cam.quaternion.copy(saved.quat);
+    saved.cam.up.copy(saved.up);
+    controls.target.copy(saved.target);
+    onResize();            // size, projection and the sidebar's view offset
+    saved.cam.updateMatrixWorld();
+    requestRender();
+  }
+}
+
+export function getRenderer() { return renderer; }
 export function getCamera()    { return camera; }
 export function getScene()     { return scene; }
 export function getControls()  { return controls; }

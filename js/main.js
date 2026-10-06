@@ -12,7 +12,7 @@ import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWirefram
          clearDiagOverlays, setDiagEdges, addDiagFaces,
          setRotationGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
-         sectionVisibleHits } from './viewer.js';
+         sectionVisibleHits, captureIsoImage } from './viewer.js';
 import { loadModelFile, computeBounds, getTriangleCount }  from './stlLoader.js';
 import { estimateStep } from './stepLoader.js';
 import { resolveStepSettings } from './stepConvert.js';
@@ -43,11 +43,14 @@ import { setDownloadSink, getDownloadSink } from './exporter.js';
 import { initPersonal, askResume } from './personal.js';
 import { initVariants, chipReorder } from './variants.js';
 import { setPreviewColors } from './previewMaterial.js';
+import { classifyUntextured } from './colorBake.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let currentGeometry   = null;   // original loaded geometry
+let _bakeColors = null;   // Personal: { enabled, textured, untextured } hex colours baked into 3MF exports
+
+let currentGeometry  = null;   // original loaded geometry
 let currentBounds     = null;   // bounds of the original geometry
 // Texture frame: the bounds the texture mapping is laid out in. Normally the
 // model's own; a shared frame (personal.js "Align to assembly") makes parts of
@@ -1530,6 +1533,7 @@ function wireEvents() {
     if (_userModelLoaded && currentGeometry) dropChoice.classList.remove('hidden');
   });
   dropZone.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;   // a chip being reordered, not a file
     e.preventDefault();
     // The dashed frame around the viewport is for plain drops; with the two boxes up, only they show.
     dropZone.classList.toggle('drag-over', dropChoice.classList.contains('hidden'));
@@ -1539,7 +1543,6 @@ function wireEvents() {
   dropZone.addEventListener('dragleave', () => { if (--dragDepth <= 0) endDrag(); });
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
-    if (!hasFiles(e)) return;   // a chip being reordered, not a file
     const overlayUp = !dropChoice.classList.contains('hidden');
     const mode = e.target.closest?.('[data-drop]')?.dataset.drop;   // 'add' | 'new' | undefined
     endDrag();
@@ -5160,6 +5163,22 @@ async function handleExport(format = 'stl') {
       return;
     }
 
+    // Personal: bake the preview colours into a 3MF. Classified here, in the working
+    // space the pipeline ran in, because the pose restore below keeps triangle order.
+    let bakedColors = null;
+    const fmts = Array.isArray(format) ? format : [format];
+    if (fmts.includes('3mf') && _bakeColors && _bakeColors.enabled) {
+      setProgress(0.96, t('progress.writing3mf'));
+      const reach = (Math.abs(settings.amplitude ?? 1) * Math.max(1, printZScale(settings)) + (settings.refineLength || 1)) * 1.5;
+      const untex = await classifyUntextured(inputs.positions, inputs.faceWeights, result.positions, reach, isStale);
+      if (isStale()) return;
+      const triN = (result.positions.length / 9) | 0;
+      const triColor = untex || new Uint8Array(triN);   // nothing untextured: one colour
+      bakedColors = { palette: [_bakeColors.textured, _bakeColors.untextured], triColor };
+      const img = await captureIsoImage(256);
+      if (img) bakedColors.thumbnail = new Uint8Array(await img.arrayBuffer());
+    }
+
     // Map the pipeline output back to the model's original position and
     // orientation (issue #82) — in-app rotation is a texturing aid and is
     // reverted here. The pipeline itself runs in the working space, so this
@@ -5210,7 +5229,7 @@ async function handleExport(format = 'stl') {
         setProgress(0.97, t('progress.writing3mf'));
         await yieldFrame();
         if (exportToken !== myToken) return;
-        await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken);
+        await export3MF(finalGeometry, `${baseName}.3mf`, () => exportToken !== myToken, bakedColors);
       } else {
         setProgress(0.97, t('progress.writingStl'));
         await yieldFrame();
@@ -6073,6 +6092,7 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
   // Mark the custom map as the active reference so the importer restores it
   // even if the user has a preset selected at export time.
   if (includeTexture) payload.activeMapName = customSource.name;
+  if (includeModel) payload.modelName = currentStlName;
   // The bundled model is written in its ORIGINAL pose (issue #82), so the
   // in-app rotation must ride along in the settings for the importer to
   // replay — otherwise a saved session would lose its orientation.
@@ -6083,7 +6103,6 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
 
   if (includeModel) {
     // Written in the original pose (issue #82); re-importing re-centers and
-  if (includeModel) payload.modelName = currentStlName;
     // replays poseRotation, so project round-trips stay stable.
     zipFiles['model.stl'] = _geometryToBinarySTL(currentGeometry, true);
     // The paint tree indexes the base geometry's triangles, so it only makes
@@ -6778,16 +6797,6 @@ async function _removeModel(id) {
   _scheduleSessionSave();
 }
 
-function _renderModelBar() {
-  _modelBar.classList.toggle('hidden', _models.items.length < 2);
-  _modelBar.textContent = '';
-  _models.items.forEach((m, i) => {
-    const chip = document.createElement('div');
-    chip.className = 'variant-chip' + (m.id === _models.activeId ? ' active' : '');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'variant-btn';
-    btn.title = `${m.name}\nClick to switch to this model · double-click the name to rename`;
 /** Double-click a model's name to rename it (its export file names follow). */
 let _modelEditing = false;
 function _renameModel(m, nameEl) {
@@ -6827,12 +6836,23 @@ function _renameModel(m, nameEl) {
   input.addEventListener('mousedown', () => { input.setSelectionRange(input.selectionEnd, input.selectionEnd); });
 }
 
-    const num = document.createElement('b');
+function _renderModelBar() {
   if (_modelEditing) return;
+  _modelBar.classList.toggle('hidden', _models.items.length < 2);
+  _modelBar.textContent = '';
+  _models.items.forEach((m, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'variant-chip' + (m.id === _models.activeId ? ' active' : '');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'variant-btn';
+    btn.title = `${m.name}\nClick to switch to this model · double-click the name to rename`;
+    const num = document.createElement('b');
     num.textContent = String(i + 1);
     const name = document.createElement('span');
     name.textContent = m.name;
     btn.append(num, name);
+    btn.addEventListener('dblclick', () => _renameModel(m, name));
     btn.addEventListener('click', () => _swapModel(m.id).catch(err => alert(t('alerts.loadFailed', { msg: err.message }))));
     const x = document.createElement('button');
     x.type = 'button';
@@ -6841,9 +6861,13 @@ function _renameModel(m, nameEl) {
     x.title = 'Remove this model from the project';
     x.setAttribute('aria-label', x.title);
     x.addEventListener('click', (e) => { e.stopPropagation(); _removeModel(m.id); });
+    chipReorder(chip, i, 'model', (from, to) => {
+      _models.items.splice(to, 0, _models.items.splice(from, 1)[0]);
+      _renderModelBar();
+      _scheduleSessionSave();
+    });
     chip.append(btn, x);
     _modelBar.append(chip);
-    btn.addEventListener('dblclick', () => _renameModel(m, name));
   });
 }
 
@@ -6852,11 +6876,6 @@ function _restoreProjectModels(unzipped, data) {
   const f = data?.models && unzipped[data.models];
   if (!f) return;
   let rec;
-    chipReorder(chip, i, 'model', (from, to) => {
-      _models.items.splice(to, 0, _models.items.splice(from, 1)[0]);
-      _renderModelBar();
-      _scheduleSessionSave();
-    });
   try { rec = JSON.parse(strFromU8(f)); } catch { return; }
   const saved = (rec?.items || []).filter(it => unzipped[it.file]);
   if (saved.length < 2 || !saved.some(it => it.id === rec.active)) return;
@@ -6912,7 +6931,12 @@ initPersonal({
     .map((L, i) => (L.visible ? _layerMapEntry(i) : null))
     .filter(Boolean)
     .map(e => String(e.name)),
-  setPreviewColors: (textured, untextured, texturedLow) => { setPreviewColors(textured, untextured, texturedLow); _syncPreviewMaterial(); },
+  setPreviewColors: (textured, untextured, texturedLow) => {
+    _bakeColors = { ..._bakeColors, textured, untextured };
+    setPreviewColors(textured, untextured, texturedLow); _syncPreviewMaterial();
+  },
+  // Personal: bake the preview colours (and a thumbnail) into exported 3MF files.
+  setBakeColors: (on) => { _bakeColors = { ..._bakeColors, enabled: !!on }; },
   // The active layer's texture: { name, category } (category '' for a custom map), or null.
   activeTexture: () => {
     const e = _layerMapEntry(activeLayer);

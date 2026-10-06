@@ -334,6 +334,37 @@ html[data-hide-hint] .viewport-controls-hint { display: none; }
   gap: 6px;
 }
 .vp-gap { width: 6px; }
+/* View snap: Front / Back / ... / Iso, top centre of the visible view. */
+.view-snap {
+  position: absolute;
+  top: var(--gap);
+  left: var(--gap);
+  right: calc(var(--view-right) + var(--gap));
+  margin: 0 auto;
+  width: max-content;
+  max-width: calc(100% - var(--view-right) - 260px);
+  z-index: 6;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel-bg-plain);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--panel-shadow);
+}
+.vs-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 15px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vs-btn:hover { background: var(--pl-track-hot); }
+.vs-btn:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 1px; }
+@media (max-width: 900px) { .view-snap { display: none; } }
 .vp-btn {
   display: flex;
   align-items: center;

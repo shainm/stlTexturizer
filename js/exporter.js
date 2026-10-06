@@ -108,8 +108,13 @@ export function exportSTL(geometry, filename = 'textured.stl') {
  * @param {() => boolean} [shouldAbort]
  * @returns {Promise<void>}
  */
-export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort = () => false) {
+export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort = () => false, extras = null) {
   if (shouldAbort()) throw new Error('Aborted');
+  // Personal: baked colours (Materials extension colour group, one colour per
+  // triangle: tri colour index → palette) and a thumbnail the file manager shows.
+  const palette = extras && extras.palette && extras.triColor ? extras.palette : null;
+  const triColor = palette ? extras.triColor : null;
+  const thumb = extras && extras.thumbnail ? extras.thumbnail : null;
   const posArr = geometry.attributes.position.array;
 
   const triCount = (posArr.length / 9) | 0;
@@ -143,6 +148,7 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n' +
     '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n' +
+    (thumb ? '<Default Extension="png" ContentType="image/png"/>\n' : '') +
     '</Types>\n';
 
   const relsXml =
@@ -150,13 +156,16 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n' +
     '<Relationship Id="rel-1" Target="/3D/3dmodel.model" ' +
     'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n' +
+    (thumb ? '<Relationship Id="rel-2" Target="/Metadata/thumbnail.png" ' +
+      'Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>\n' : '') +
     '</Relationships>\n';
 
   // ── Zip and download ─────────────────────────────────────────────────────
   const blob = await zipChunks([
     ['[Content_Types].xml', [strToU8(contentTypesXml)]],
     ['_rels/.rels', [strToU8(relsXml)]],
-    ['3D/3dmodel.model', modelChunks(uniqueXYZ, triIdx)],
+    ...(thumb ? [['Metadata/thumbnail.png', [thumb]]] : []),
+    ['3D/3dmodel.model', modelChunks(uniqueXYZ, triIdx, palette, triColor)],
   ], shouldAbort);
   if (shouldAbort()) throw new Error('Aborted');
   triggerDownload(blob, filename);
@@ -164,13 +173,21 @@ export async function export3MF(geometry, filename = 'textured.3mf', shouldAbort
 
 // Generate bounded XML chunks directly into the compressor. Keeping all XML
 // chunks and then concatenating them used two full uncompressed mesh copies.
-function* modelChunks(vertices, indices) {
+function* modelChunks(vertices, indices, palette = null, triColor = null) {
   const enc = new TextEncoder();
   const threshold = 1 << 20;
   let pending = '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<model unit="millimeter" xml:lang="en-US" ' +
-    'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n' +
-    '<resources>\n<object id="1" type="model">\n<mesh>\n<vertices>\n';
+    'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"' +
+    (palette ? ' xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"' : '') + '>\n' +
+    '<resources>\n';
+  if (palette) {
+    pending += '<m:colorgroup id="2">\n' +
+      palette.map(c => `<m:color color="${c.toUpperCase()}FF"/>\n`).join('') + '</m:colorgroup>\n' +
+      '<object id="1" type="model" pid="2" pindex="0">\n<mesh>\n<vertices>\n';
+  } else {
+    pending += '<object id="1" type="model">\n<mesh>\n<vertices>\n';
+  }
   const fmt = (n) => {
     // 4 decimals matches the dedup precision; strip trailing zeros and ".".
     let s = n.toFixed(4);
@@ -184,7 +201,9 @@ function* modelChunks(vertices, indices) {
   }
   pending += '</vertices>\n<triangles>\n';
   for (let i = 0; i < indices.length; i += 3) {
-    pending += `<triangle v1="${indices[i]}" v2="${indices[i+1]}" v3="${indices[i+2]}"/>\n`;
+    pending += triColor
+      ? `<triangle v1="${indices[i]}" v2="${indices[i+1]}" v3="${indices[i+2]}" pid="2" p1="${triColor[i / 3]}"/>\n`
+      : `<triangle v1="${indices[i]}" v2="${indices[i+1]}" v3="${indices[i+2]}"/>\n`;
     if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
   }
   pending += '</triangles>\n</mesh>\n</object>\n</resources>\n' +
