@@ -231,8 +231,7 @@ or edges, never the reverse. The remaining T-junctions are closed by
 splitting triangles only at points on their own edges, so original corners
 stay bit-exact and every original triangle keeps its plane and outline.
 The pipeline keeps the unstitched mesh if the stitch would add open or
-non-manifold edges (`preserveStats.failed`). Bake mode skips it (it would
-invalidate the parent-face map). `tests/preserveStitch.test.mjs` checks it.
+non-manifold edges (`preserveStats.failed`). `tests/preserveStitch.test.mjs` checks it.
 
 ## Texture ends flush with flat untextured faces (`js/flushFaces.js`)
 
