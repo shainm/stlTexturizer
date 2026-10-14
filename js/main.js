@@ -4817,13 +4817,39 @@ function _materialSettings(preview) {
  * Stack view (js/stackView.js): a preview material for another part, drawn
  * with a variant's settings (`snap`, or the live ones for null). `frame` is
  * the part's texture frame in its file coordinates ({min, size, modular}), in
- * which `geo` is given too. Paint is not carried over: the whole part is textured.
- * `testTexture` (optional) replaces every layer's image, keeping its mapping and
- * aspect, so the tile layout shows plainly.
+ * which `geo` is given too. `modelId` (optional): the project model `geo` is,
+ * whose painted masks then decide what is textured, per layer and its mode, as
+ * in the main view (whole-face precision: strokes finer than a face are
+ * averaged onto its corners). `testTexture` (optional) replaces every layer's
+ * image, keeping its mapping and aspect, so the tile layout shows plainly.
  */
-function _stackMaterial(snap, geo, frame, mat = null, testTexture = null) {
+const _stackPaintTrees = new WeakMap();   // stack geometry → that model's paint tree (null: none)
+function _stackPaintTree(modelId, geo) {
+  if (_stackPaintTrees.has(geo)) return _stackPaintTrees.get(geo);
+  _ensureActiveModel();
+  const data = modelId === _models.activeId
+    ? (paintTree ? paintTree.serialize({ leafCov: true }) : null)
+    : _models.items.find(m => m.id === modelId)?.paint || null;
+  let tree = null;
+  if (data) {
+    const adj = buildAdjacency(geo);
+    tree = new PaintTree({ positions: geo.attributes.position.array, vertId: adj.vertId, vertCount: adj.vertCount,
+      adjacency: adj.adjacency, faceNormals: adj.faceNormals });
+    for (const L of layers) tree.addLayer(L.id);
+    if (!tree.deserialize(data)) { console.warn('[stack view] paint does not match the model'); tree = null; }
+  }
+  _stackPaintTrees.set(geo, tree);
+  return tree;
+}
+
+function _stackMaterial(snap, geo, frame, mat = null, testTexture = null, modelId = null) {
   const s = snap || _captureUndoSnapshot();
   const list = [];
+  // Per visible layer: textured coverage on geo's corners (1 = textured).
+  const tree = modelId != null ? _stackPaintTree(modelId, geo) : null;
+  const corners = geo.attributes.position.count;
+  const mask = geo.attributes.layerMask;
+  if (mask) mask.array.fill(0);
   for (const [i, L] of s.layers.entries()) {
     if (!L.visible || list.length >= MAX_LAYERS) continue;
     const st = L.settings;
@@ -4840,7 +4866,17 @@ function _stackMaterial(snap, geo, frame, mat = null, testTexture = null) {
       textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1),
       blendAdd: i > 0 && L.blendAdd,
     });
+    if (mask) {
+      const ch = list.length - 1, slot = tree ? tree.layerSlot(L.id) : -1;
+      const paint = slot >= 0 && tree.hasPaint(slot) ? tree.basePaint(slot).paint : null;
+      const a = mask.array;
+      for (let c = 0; c < corners; c++) {
+        const p = paint ? paint[c] : 0;
+        a[c * 4 + ch] = L.includeOnly ? p : 1 - p;   // Include Only: painted = textured; else painted = not
+      }
+    }
   }
+  if (mask) mask.needsUpdate = true;
   const min = new THREE.Vector3(frame.min.x, frame.min.y, frame.min.z);
   const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
   const b = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
@@ -7136,7 +7172,7 @@ initPersonal({
     },
   },
   hasModel: () => !!currentGeometry,
-  stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?) → preview material
+  stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?, testTexture?, modelId?) → preview material
   setSessionExtra: (fn) => { _sessionExtra = fn; },
   onSessionRestored: (fn) => { _sessionRestoredHooks.push(fn); },
   stackLayout: { get: () => _stackLayout, set: (v) => { _stackLayout = v; _scheduleSessionSave(); } },
