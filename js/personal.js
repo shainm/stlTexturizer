@@ -50,6 +50,7 @@ import { THREE } from './threeCompat.js';
 import { getCamera, getRenderer, getCurrentMesh, setDiagEdges, requestRender, setViewDirection, captureIsoImage } from './viewer.js';
 import { initSettingsMenu, modelColors, currentThemeColor, materialColors, modelColorMode } from './pdsSettings.js';
 import { onLogoIcon } from './themedLogo.js';
+import { openStackView } from './stackView.js';
 
 export const EDITION = 'PDS Edition';
 const LS = 'bm-pds-';
@@ -724,7 +725,13 @@ function initAlignControl(app) {
   _alignStatus = el('span', { class: 'muted' });
   const btn = el('button', { class: 'pds-btn', title: 'Line the texture up across parts printed separately (modular stacking or one assembly)' }, 'Line up parts…');
   btn.addEventListener('click', () => alignDialog(app).catch(err => notice('Align texture', err.message)));
-  anchor.after(el('div', { class: 'pds-align' }, btn, _alignStatus));
+  const stackBtn = el('button', { class: 'pds-btn', title: "Stack the project's parts along their axis with one variant's texture, to check the joints" }, 'Stack view…');
+  stackBtn.addEventListener('click', () => {
+    if (!app.hasModel()) return;
+    try { openStackView(app, { parseSTL, stackDatums, align: state.align }); }
+    catch (err) { notice('Stack view', err.message); }
+  });
+  anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));
   updateAlignStatus();
 }
 

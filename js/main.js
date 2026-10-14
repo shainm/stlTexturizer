@@ -65,19 +65,19 @@ function _mapBounds() { return _mapFrame || currentBounds; }
 // preview shader, the workers and computeUV all see it.
 const _profileCache = new WeakMap();
 const _fitCache = new WeakMap();   // base profile → joint-fitted variants
-function _attachProfile(b) {
+// `geo` / `layerSettings` default to the loaded model and its layers (the stack view passes others).
+function _attachProfile(b, geo = currentGeometry, layerSettings = layers.map((L, i) => (i === activeLayer ? settings : L.settings))) {
   if (!b) return b;
-  const used = layers.some((L, i) => (i === activeLayer ? settings : L.settings).mappingMode === 7);
-  if (!used || !currentGeometry) { b.profile = null; return b; }
-  let byCenter = _profileCache.get(currentGeometry);
-  if (!byCenter) _profileCache.set(currentGeometry, byCenter = new Map());
+  const flat = layerSettings.find(s => s.mappingMode === 7);
+  if (!flat || !geo) { b.profile = null; return b; }
+  let byCenter = _profileCache.get(geo);
+  if (!byCenter) _profileCache.set(geo, byCenter = new Map());
   const key = `${b.center.x},${b.center.y},${b.center.z}`;
-  if (!byCenter.has(key)) byCenter.set(key, buildProfile(currentGeometry, b.center));
+  if (!byCenter.has(key)) byCenter.set(key, buildProfile(geo, b.center));
   b.profile = byCenter.get(key);
   // Modular stacking (personal.js "Line up parts"): refit V so the seat and top
   // joint rings both fall on the texture's tile seam, like the cylinder's height fit.
   const mod = b.modular, base = b.profile;
-  const flat = layers.map((L, i) => (i === activeLayer ? settings : L.settings)).find(s => s.mappingMode === 7);
   if (mod && base && flat && mod.pitch > 0 && Math.abs(Math.cos((Number(flat.rotation) || 0) * Math.PI / 180)) > 0.999) {
     const { refV } = getScaleReferenceLengths(7, flat, b);
     const tile = refV * scaleMmToRelative(7, flat, b).v / (flat.textureAspectV ?? 1);
@@ -4812,6 +4812,47 @@ function _materialSettings(preview) {
   };
 }
 
+/**
+ * Stack view (js/stackView.js): a preview material for another part, drawn
+ * with a variant's settings (`snap`, or the live ones for null). `frame` is
+ * the part's texture frame in its file coordinates ({min, size, modular}), in
+ * which `geo` is given too. Paint is not carried over: the whole part is textured.
+ */
+function _stackMaterial(snap, geo, frame, mat = null) {
+  const s = snap || _captureUndoSnapshot();
+  const list = [];
+  for (const [i, L] of s.layers.entries()) {
+    if (!L.visible || list.length >= MAX_LAYERS) continue;
+    const st = L.settings;
+    const entry = _effectiveMapFor(L.mapEntry, st.textureSmoothing, st.invertTexture);
+    const tw = entry?.width ?? 1, th = entry?.height ?? 1, tmax = Math.max(tw, th, 1);
+    list.push({
+      texture: entry?.texture ?? null,
+      mappingMode: st.mappingMode, scaleU: st.scaleU, scaleV: st.scaleV,
+      offsetU: st.offsetU, offsetV: st.offsetV, rotation: st.rotation,
+      amplitude: entry ? st.amplitude : 0,
+      symmetricDisplacement: st.symmetricDisplacement,
+      mappingBlend: st.mappingBlend, seamBandWidth: st.seamBandWidth, capAngle: st.capAngle,
+      cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,   // the axis belongs to the loaded model
+      textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1),
+      blendAdd: i > 0 && L.blendAdd,
+    });
+  }
+  const min = new THREE.Vector3(frame.min.x, frame.min.y, frame.min.z);
+  const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
+  const b = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
+  if (frame.modular) b.modular = { ...frame.modular };
+  _attachProfile(b, geo, list);
+  const g = s.global;
+  const ms = {
+    bounds: b, bottomAngleLimit: g.bottomAngleLimit, topAngleLimit: g.topAngleLimit,
+    noDownwardZ: g.noDownwardZ, printZScale: printZScale(g), useDisplacement: false,
+    activeLayer: 0, boundaryFalloff: 0, boundaryFalloffCurve: 'linear', layeredTint: false,
+  };
+  if (mat) { updateMaterial(mat, list, ms); return mat; }
+  return createPreviewMaterial(list, ms);
+}
+
 /** Rebuild the preview material's per-layer uniforms and global settings. */
 function _syncPreviewMaterial() {
   if (!previewMaterial) return;
@@ -7051,6 +7092,12 @@ initPersonal({
   models: {              // the project's models (see "Models of the project")
     list: () => { _ensureActiveModel(); return _models.items.map(m => ({ id: m.id, name: m.name })); },
     activeId: () => { _ensureActiveModel(); return _models.activeId; },
+    // A model's mesh as binary STL bytes in its file coordinates (the loaded one straight from the view).
+    stl: (id) => {
+      _ensureActiveModel();
+      if (id === _models.activeId) return currentGeometry ? _geometryToBinarySTL(currentGeometry, true) : null;
+      return _models.items.find(m => m.id === id)?.stl || null;
+    },
     swapTo: async (id) => {
       if (id === _models.activeId) return true;
       const ok = await _swapModel(id);
@@ -7059,6 +7106,7 @@ initPersonal({
     },
   },
   hasModel: () => !!currentGeometry,
+  stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?) → preview material
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
     .map((L, i) => (L.visible ? _layerMapEntry(i) : null))

@@ -282,6 +282,8 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, inherit
     refresh,
     list,
     defaultSnap,
+    /** A saved variant's snapshot (current edits included), or null. */
+    snapOf: (id) => { keepEdits(); return variants.find(o => o.id === id)?.snap || null; },
     runEach,
   };
 }
