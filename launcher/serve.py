@@ -151,6 +151,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def end_headers(self):
+        # App files change with every update: the browser must check before
+        # reusing its copy, or a reload can keep running old scripts.
+        if b"Cache-Control" not in b"".join(getattr(self, "_headers_buffer", [])):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     # ── helpers ──
     def _json(self, obj, status=200):
         body = json.dumps(obj).encode("utf-8")
