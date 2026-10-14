@@ -15,7 +15,7 @@
  * Arc length cannot be computed from one point, so it is measured once on the
  * mesh: every vertex gets its shortest profile distance (Dijkstra, edge cost =
  * height travelled, plus radius travelled on near-flat faces, so going around
- * the axis or sideways along a lobed wall is free) from the vertex nearest the axis among the lowest of its connected piece. The
+ * the axis or sideways along a lobed wall is free) from the outermost of the lowest vertices of its connected piece. The
  * values are baked into a 2D grid over (radius, height) that the CPU mapping
  * and the preview shader both sample.
  *
@@ -157,9 +157,11 @@ export function buildProfile(geometry, center) {
     if (zArr[v] > zMax) zMax = zArr[v];
   }
 
-  // Seeds: per connected piece, the vertex nearest the axis among its lowest
-  // ones. (Nearest the axis first would start a part whose bore narrows towards
-  // the top at the top, and V would run downwards over the whole part.)
+  // Seeds: per connected piece, the OUTERMOST of its lowest vertices — the
+  // visible bottom seam (a wall's outer bottom edge, a base plate's rim), so V
+  // runs from there along the outside. (Starting nearest the axis begins on a
+  // spigot or inside a skirt, and the outside then meets V that came up a
+  // hidden wall; nearest the axis first could even start a part at its top.)
   const comp = new Int32Array(nv).fill(-1);
   const seeds = [];
   const stack = new Int32Array(nv);
@@ -183,7 +185,7 @@ export function buildProfile(geometry, center) {
     let best = -1;
     for (const v of members) {
       if (zArr[v] > lowZ + zTol) continue;
-      if (best === -1 || rhoArr[v] < rhoArr[best]) best = v;
+      if (best === -1 || rhoArr[v] > rhoArr[best]) best = v;
     }
     seeds.push(best);
   }
@@ -366,21 +368,26 @@ export function fitProfileToJoints(prof, seatZ, topZ, tile, seatV) {
     }
     return null;
   };
-  // Prefer the real joint edge: of the outer edges at that height, the one
-  // nearest the axis (the wall the next part sits on, not a lip around it).
-  const edgeV = (z) => {
-    const r = prof.rims;
-    if (!r) return null;
+  // Prefer the real joint edges (outer level edges at that height), V read
+  // just beside them on the wall. Bottom: the outermost — the visible bottom
+  // seam, not a spigot or step under it. Top: the one the outside reaches most
+  // directly (lowest V) — the wall's top, not a pocket rim or lip at the same
+  // height, nor an inner ledge across the rim.
+  const edgesAt = (z) => {
+    const r = prof.rims, out = [];
+    if (!r) return out;
     const tol = Math.max(0.06, cell * 0.5);
-    let best = Infinity;
-    for (let i = 0; i < r.length; i += 2) if (Math.abs(r[i + 1] - z) <= tol && r[i] < best) best = r[i];
-    return best < Infinity ? sampleProfile(prof, best + cell, z) : null;   // a cell out: on the wall, not the rim top
+    for (let i = 0; i < r.length; i += 2) if (Math.abs(r[i + 1] - z) <= tol) out.push(r[i]);
+    return out;
   };
-  const vSeat = edgeV(seatZ) ?? ringV(seatZ), vTop = edgeV(topZ) ?? ringV(topZ);
-  if (vSeat == null || vTop == null) return prof;
-  const L = vTop - vSeat;
-  if (!(L > tile * 0.25)) return prof;
-  const k = Math.max(1, Math.round(L / tile)) * tile / L;
+  const seatEdges = edgesAt(seatZ), topEdges = edgesAt(topZ);
+  const vSeat = seatEdges.length ? sampleProfile(prof, Math.max(...seatEdges), seatZ + cell) : ringV(seatZ);
+  const vTop = topEdges.length ? Math.min(...topEdges.map(r => sampleProfile(prof, r, topZ - cell))) : ringV(topZ);
+  if (vSeat == null) return prof;
+  // The bottom seam always starts a row; the top joint is fitted to a whole
+  // number of rows when there is one (the topmost part has none: just shifted).
+  const L = vTop == null ? 0 : vTop - vSeat;
+  const k = L > tile * 0.25 ? Math.max(1, Math.round(L / tile)) * tile / L : 1;
   const out = new Float32Array(data);
   for (let i = 0; i < out.length; i += 4) out[i] = seatV + (data[i] - vSeat) * k;
   return { ...prof, data: out };
