@@ -116,6 +116,7 @@ export function buildProfile(geometry, center) {
   // way to the top of a tall outer wall can run up the inside, over the rim
   // and back down, and V would grow downwards there (the texture upside down).
   const inward = new Uint8Array(start[nv]);
+  const triInward = new Uint8Array(triCount);
   for (let t = 0; t < triCount; t++) {
     const a = ids[t * 3], b = ids[t * 3 + 1], c = ids[t * 3 + 2];
     // Cost = height travelled, plus radius travelled only on near-flat faces.
@@ -132,6 +133,7 @@ export function buildProfile(geometry, center) {
     const cx = xArr[a] + xArr[b] + xArr[c], cy = yArr[a] + yArr[b] + yArr[c], cr = Math.hypot(cx, cy);
     const radial = cr > 1e-9 ? ((e1y * e2z - e1z * e2y) * cx + (e1z * e2x - e1x * e2z) * cy) / (nl * cr) : 0;
     const inw = radial < -0.3 ? 1 : 0;
+    triInward[t] = inw;
     const hRaw = Math.min(1, Math.max(0, (Math.abs(nzv) - FLAT_LO) / (FLAT_HI - FLAT_LO)));
     const h = hRaw * hRaw * (3 - 2 * hRaw);
     const w = (p, q) => Math.abs(zArr[q] - zArr[p]) + h * Math.abs(rhoArr[q] - rhoArr[p]);
@@ -226,10 +228,13 @@ export function buildProfile(geometry, center) {
   for (const s of seeds) { dist[s] = 0; push(s, 0); }
   run(true);    // the outside (an edge counts when one of its faces does not look at the axis)
   for (let v = 0; v < nv; v++) if (dist[v] < Infinity) push(v, dist[v]);
-  run(false);   // then the inner walls, on from there
+  run(false);   // then the inner walls (only used when nothing faces outward, see the bake)
 
   // Bake into a (rho, z) grid by drawing every triangle edge with V interpolated
-  // along it (vertices alone leave big flat faces empty).
+  // along it (vertices alone leave big flat faces empty). Only faces that don't
+  // look at the axis are drawn: a thin wall's inside lands in the same cells as
+  // its outside, and V measured down from the rim on the inside would mix with
+  // the outside's into noise. The inner walls read the outside next to them.
   const span = Math.max(rhoMax, zMax - zMin, 1e-6);
   const cell = span / TARGET_CELLS;
   const nr = Math.min(MAX_DIM, Math.floor(rhoMax / cell) + 2);
@@ -242,19 +247,26 @@ export function buildProfile(geometry, center) {
     const k = iy * nr + ix;
     sum[k] += d; if (cnt[k] < 65535) cnt[k]++;
   };
-  for (let t = 0; t < triCount; t++) {
-    for (let e = 0; e < 3; e++) {
-      const a = ids[t * 3 + e], b = ids[t * 3 + (e + 1) % 3];
-      const len = Math.hypot(rhoArr[b] - rhoArr[a], zArr[b] - zArr[a]);
-      const steps = Math.max(1, Math.ceil(len / cell * 2));
-      for (let s = 0; s <= steps; s++) {
-        const f = s / steps;
-        plot(rhoArr[a] + (rhoArr[b] - rhoArr[a]) * f,
-             zArr[a]   + (zArr[b]   - zArr[a])   * f,
-             dist[a]   + (dist[b]   - dist[a])   * f);
+  const bake = (outsideOnly) => {
+    let drawn = 0;
+    for (let t = 0; t < triCount; t++) {
+      if (outsideOnly && triInward[t]) continue;
+      drawn++;
+      for (let e = 0; e < 3; e++) {
+        const a = ids[t * 3 + e], b = ids[t * 3 + (e + 1) % 3];
+        const len = Math.hypot(rhoArr[b] - rhoArr[a], zArr[b] - zArr[a]);
+        const steps = Math.max(1, Math.ceil(len / cell * 2));
+        for (let s = 0; s <= steps; s++) {
+          const f = s / steps;
+          plot(rhoArr[a] + (rhoArr[b] - rhoArr[a]) * f,
+               zArr[a]   + (zArr[b]   - zArr[a])   * f,
+               dist[a]   + (dist[b]   - dist[a])   * f);
+        }
       }
     }
-  }
+    return drawn;
+  };
+  if (!bake(true)) bake(false);   // everything facing inwards (a mesh turned inside out): draw it all
 
   // Smooth the grid. Where the part is not a perfect solid of revolution,
   // different angles land in the same cell with slightly different V, so raw
