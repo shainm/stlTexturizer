@@ -77,6 +77,31 @@ function partGeometry(pos) {
   return geo;
 }
 
+/**
+ * Alignment test pattern (a height map: white = raised). Each tile gets a thick
+ * border — the texture's seams — a thin centre cross and an arrow pointing up
+ * (+V). Where parts line up, the borders run straight on across every joint.
+ */
+function testPattern() {
+  const N = 512, c = document.createElement('canvas');
+  c.width = c.height = N;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, N, N);
+  g.fillStyle = '#fff';
+  const b = 22;   // half the border: the other half is on the next tile
+  g.fillRect(0, 0, N, b); g.fillRect(0, N - b, N, b); g.fillRect(0, 0, b, N); g.fillRect(N - b, 0, b, N);
+  g.fillStyle = '#999';
+  g.fillRect(N / 2 - 4, 0, 8, N); g.fillRect(0, N / 2 - 4, N, 8);
+  g.fillStyle = '#fff';   // arrow in the upper-left quarter, pointing up the tile
+  g.beginPath();
+  g.moveTo(N * 0.25, N * 0.08); g.lineTo(N * 0.40, N * 0.24); g.lineTo(N * 0.30, N * 0.24); g.lineTo(N * 0.30, N * 0.42);
+  g.lineTo(N * 0.20, N * 0.42); g.lineTo(N * 0.20, N * 0.24); g.lineTo(N * 0.10, N * 0.24); g.closePath();
+  g.fill();
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
 function xyBounds(pos) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
   for (let i = 0; i < pos.length; i += 3) {
@@ -164,9 +189,10 @@ export function openStackView(app, h) {
       modular: { pitch: p.datums.pitch, positions: steps || 1 },
     };
   }
+  let testTex = null;   // the alignment test pattern, while it's switched on
   function buildMaterials() {
     const snap = variant != null ? app.variants.snapOf(variant) : null;
-    for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat);
+    for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat, testTex);
   }
 
   // Each item: a group on the axis at its stacked height, turned by its steps.
@@ -238,6 +264,9 @@ export function openStackView(app, h) {
     ...variantList.map(v => el('option', { value: v.id }, `${v.num} · ${v.label}`)));
   varSel.value = variant == null ? '' : String(variant);
 
+  const testHint = el('p', { class: 'muted', hidden: true },
+    'Thick lines are the tile edges, the arrows point up. Lined up, the lines run straight across every joint. ' +
+    'A step in the level lines: up/down is off (joint heights). A step in the upright lines or tilted arrows: around is off (axis or steps).');
   const deg = (it) => steps ? `${+((it.turn * 360) / steps).toFixed(1)}°` : '';
   function renderList() {
     list.textContent = '';
@@ -275,6 +304,7 @@ export function openStackView(app, h) {
     document.removeEventListener('keydown', onKey, true);
     controls.dispose();
     for (const p of parts.values()) { p.geo.dispose(); p.mat?.dispose(); }
+    testTex?.dispose();
     renderer.dispose();
     overlay.remove();
   };
@@ -292,6 +322,13 @@ export function openStackView(app, h) {
     el('aside', {},
       el('h3', {}, 'Stack view', el('button', { class: 'x', title: 'Close (Esc)', onclick: () => close() }, '✕')),
       el('h4', {}, 'Texture'), varSel,
+      el('label', { title: 'Swap the image for a grid with the same size and placement: thick lines are the tile edges' },
+        el('input', { type: 'checkbox', onchange: (e) => {
+          if (e.target.checked) testTex = testPattern(); else { testTex?.dispose(); testTex = null; }
+          buildMaterials(); layout();
+          testHint.hidden = !e.target.checked;
+        } }), ' Alignment test pattern'),
+      testHint,
       el('h4', {}, 'Stack (top first)'), list,
       el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
         el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),

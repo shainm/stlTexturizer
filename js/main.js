@@ -4817,8 +4817,10 @@ function _materialSettings(preview) {
  * with a variant's settings (`snap`, or the live ones for null). `frame` is
  * the part's texture frame in its file coordinates ({min, size, modular}), in
  * which `geo` is given too. Paint is not carried over: the whole part is textured.
+ * `testTexture` (optional) replaces every layer's image, keeping its mapping and
+ * aspect, so the tile layout shows plainly.
  */
-function _stackMaterial(snap, geo, frame, mat = null) {
+function _stackMaterial(snap, geo, frame, mat = null, testTexture = null) {
   const s = snap || _captureUndoSnapshot();
   const list = [];
   for (const [i, L] of s.layers.entries()) {
@@ -4827,10 +4829,10 @@ function _stackMaterial(snap, geo, frame, mat = null) {
     const entry = _effectiveMapFor(L.mapEntry, st.textureSmoothing, st.invertTexture);
     const tw = entry?.width ?? 1, th = entry?.height ?? 1, tmax = Math.max(tw, th, 1);
     list.push({
-      texture: entry?.texture ?? null,
+      texture: testTexture || (entry?.texture ?? null),
       mappingMode: st.mappingMode, scaleU: st.scaleU, scaleV: st.scaleV,
       offsetU: st.offsetU, offsetV: st.offsetV, rotation: st.rotation,
-      amplitude: entry ? st.amplitude : 0,
+      amplitude: testTexture ? (st.amplitude || 0.5) : entry ? st.amplitude : 0,
       symmetricDisplacement: st.symmetricDisplacement,
       mappingBlend: st.mappingBlend, seamBandWidth: st.seamBandWidth, capAngle: st.capAngle,
       cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,   // the axis belongs to the loaded model
