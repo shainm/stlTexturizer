@@ -1187,9 +1187,11 @@ async function exportDialog(app) {
   for (;;) {
     if (mesh) meshHost.append(mesh);
     const go = await modal('Export', body, [
+      { label: 'Archive previous exports…', value: 'archive' },
       { label: 'Preview export', value: 'preview' }, { label: 'Cancel', value: null }, { label: 'Export', value: 'go', primary: true }]);
     meshBack();
     if (go === 'preview') { document.getElementById('preview-export-btn')?.click(); return; }
+    if (go === 'archive') { await archivePreviousExports(); continue; }   // then back to this dialog
     if (!go) return;
     const opts = {
       format: doModel.checked ? fmtNow() : null,
@@ -1301,6 +1303,45 @@ function pathTree(paths, isOpen) {
     return d;
   });
   return el('div', {}, build(root, '', 0));
+}
+
+/**
+ * Move everything exported so far (the job folder's Textured\ — every model's
+ * files and iso images) into Archive\<when the newest was made>\, keeping its
+ * folders, ahead of exporting better ones. Projects (the variations), shared
+ * settings and Originals stay: they are what the next export is made from.
+ */
+async function archivePreviousExports() {
+  const title = 'Archive previous exports';
+  if (!state.dest) { await notice(title, 'No export folder is set yet.'); return; }
+  try { await migrateFolders(state.dest); } catch {}
+  const files = [];
+  const walk = async (dir) => {
+    let items;
+    try { items = (await call('list', { dir })).items; } catch { return; }
+    for (const it of items) { if (it.isDir) await walk(it.path); else if (it.exists) files.push(it); }
+  };
+  await walk(join(state.dest, SUB.textured));
+  if (!files.length) { await notice(title, `Nothing has been exported to ${SUB.textured}\\ here yet.`); return; }
+  const rel = (p) => p.slice(state.dest.length + 1);
+  const when = Math.max(...files.map(f => f.mtime)) * 1000;
+  const ok = await modal(title, el('div', {},
+    el('p', {}, `Move the ${files.length} exported file${files.length > 1 ? 's' : ''} in ${SUB.textured}\\ (last made ${new Date(when).toLocaleString()}) to ${SUB.archive}\\${stamp(when)}\\, keeping their folders?`),
+    pathTree(files.map(f => rel(f.path)), (p, depth) => depth === 0),
+    el('p', { class: 'muted' }, `${SUB.project}\\ (the variations and shared settings) and ${SUB.original}\\ stay where they are.`)),
+    [{ label: 'Cancel', value: null }, { label: 'Archive', value: 1, primary: true }]);
+  if (!ok) return;
+  // Named by when the files were made; two in the same minute must not collide.
+  let archiveDir = join(state.dest, SUB.archive, stamp(when));
+  for (let k = 2; (await exists(archiveDir)).exists; k++) archiveDir = join(state.dest, SUB.archive, `${stamp(when)} (${k})`);
+  let moved = 0;
+  try {
+    for (const f of files) { await call('move', { src: f.path, dst: join(archiveDir, rel(f.path)) }); moved++; }
+  } catch (err) {
+    await notice(title, `Archived ${moved} of ${files.length} files, then: ${err.message}`);
+    return;
+  }
+  await notice(title, `Archived ${moved} file${moved > 1 ? 's' : ''} to ${rel(archiveDir)}\\.`);
 }
 
 /** Writes one model's export; false = cancelled or failed. With `sink` (an array) the written paths are added to it and no summary is shown. */
