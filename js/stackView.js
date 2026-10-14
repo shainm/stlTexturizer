@@ -114,7 +114,8 @@ function xyBounds(pos) {
 
 /**
  * @param {object} app   personal.js's app bridge (models, variants, stackMaterial)
- * @param {object} h     { parseSTL, stackDatums, align } — align is "Line up parts"' state (or null)
+ * @param {object} h     { parseSTL, stackDatums, align, setDatums } — align is "Line up parts"' state (or null);
+ *   setDatums(modelId, { seat, pitch }) puts joint edges typed here into it, so export uses them too
  */
 export function openStackView(app, h) {
   if (document.querySelector('.pds-stack')) return;
@@ -140,7 +141,8 @@ export function openStackView(app, h) {
     const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
     const detected = h.stackDatums(pos, axis);
     const remembered = saved?.datums?.[m.id];
-    const datums = remembered || (modular && (align.datums?.[m.id] || (m.id === activeId ? { seat: align.seat, pitch: align.pitch } : null))) || detected;
+    // Lined up: the line-up's own edges for the part (what export uses); else what was typed here.
+    const datums = (modular && (align.datums?.[m.id] || (m.id === activeId ? { seat: align.seat, pitch: align.pitch } : null))) || remembered || detected;
     let rMax = 0;
     for (let i = 0; i < pos.length; i += 3) rMax = Math.max(rMax, Math.hypot(pos[i] - axis.x, pos[i + 1] - axis.y));
     parts.set(m.id, { id: m.id, name: m.name, pos, own, xy, axis, rMax, datums: { ...datums }, edited: !!remembered, geo: partGeometry(pos), mat: null });
@@ -197,6 +199,39 @@ export function openStackView(app, h) {
 
   // Each item: a group on the axis at its stacked height, turned by its steps.
   let groups = [], bases = [];
+  // Joint rings, drawn through the parts: yellow where a part's bottom joint
+  // (seat) is, cyan where it says the next part sits. Each pair meets by
+  // construction; what they show is whether that is where the parts touch.
+  const joints = new THREE.Group();
+  scene.add(joints);
+  const seatLine = new THREE.LineBasicMaterial({ color: 0xffd400, depthTest: false, transparent: true });
+  const topLine = new THREE.LineBasicMaterial({ color: 0x33ddff, depthTest: false, transparent: true });
+  const radiusAt = (p, z) => {   // the part's outer radius at height z (file coordinates)
+    let r = 0;
+    for (let i = 0; i < p.pos.length; i += 3) {
+      if (Math.abs(p.pos[i + 2] - z) < 0.6) r = Math.max(r, Math.hypot(p.pos[i] - p.axis.x, p.pos[i + 1] - p.axis.y));
+    }
+    return r || p.rMax;
+  };
+  const circle = (r, z, mat) => {
+    const pts = [];
+    for (let k = 0; k < 128; k++) { const a = k / 128 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, z)); }
+    const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    line.renderOrder = 10;
+    return line;
+  };
+  function showJoints() {
+    for (const c of joints.children) c.geometry.dispose();
+    joints.clear();
+    if (!jointsOn) return;
+    items.forEach((it, i) => {
+      const p = parts.get(it.model), d = p.datums;
+      joints.add(circle(radiusAt(p, d.seat) + 0.4, bases[i] + d.seat, seatLine));
+      if (i < items.length - 1) joints.add(circle(radiusAt(p, d.seat + d.pitch) + 0.8, bases[i] + d.seat + d.pitch, topLine));
+    });
+  }
+  let jointsOn = true;
+
   function layout() {
     stack.clear();
     groups = []; bases = [];
@@ -216,6 +251,7 @@ export function openStackView(app, h) {
       z = base; prev = p;
     }
     showRing();
+    showJoints();
   }
 
   function showRing() {
@@ -289,7 +325,7 @@ export function openStackView(app, h) {
     for (const p of parts.values()) {
       const num = (k) => {
         const inp = el('input', { type: 'number', step: '0.01', value: p.datums[k].toFixed(2), title: k === 'seat' ? 'Bottom joint edge (mm, file Z)' : 'Where the next part sits, above the seat (mm)' });
-        inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) { p.edited = true; p.datums[k] = k === 'pitch' ? Math.max(0, v) : v; buildMaterials(); layout(); remember(); } });
+        inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) { p.edited = true; p.datums[k] = k === 'pitch' ? Math.max(0, v) : v; h.setDatums?.(p.id, { ...p.datums }); buildMaterials(); layout(); remember(); } });
         return inp;
       };
       datumsBox.append(el('span', {}, p.name), num('seat'), num('pitch'));
@@ -329,6 +365,8 @@ export function openStackView(app, h) {
           testHint.hidden = !e.target.checked;
         } }), ' Alignment test pattern'),
       testHint,
+      el('label', { title: 'Yellow: each part\'s bottom joint. Cyan: where it says the next part sits. Drawn through the parts.' },
+        el('input', { type: 'checkbox', checked: true, onchange: (e) => { jointsOn = e.target.checked; showJoints(); } }), ' Show joint rings'),
       el('h4', {}, 'Stack (top first)'), list,
       el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
         el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),
@@ -338,6 +376,7 @@ export function openStackView(app, h) {
           ? 'Turning is off: tick "Parts may sit turned in steps" in Line up parts to turn parts here.'
           : 'Parts are not lined up for modular stacking (Line up parts), so the textures may not meet at the joints and parts cannot be turned.'),
       el('h4', {}, 'Joints per part: seat · next part at (mm above it)'), datumsBox,
+      el('p', { class: 'muted' }, 'Set these to where the parts really touch: if a part sits down inside the one below (on a ledge, not the rim), the lower part\'s "next part at" is that ledge. The cyan ring must lie on it.'),
       el('p', { class: 'muted' }, 'The whole part is textured here (painted masks are not shown).')),
     el('main', {}, canvas));
   document.body.append(overlay);

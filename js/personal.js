@@ -732,7 +732,14 @@ function initAlignControl(app) {
   const stackBtn = el('button', { class: 'pds-btn', title: "Stack the project's parts along their axis with one variant's texture, to check the joints" }, 'Stack view…');
   stackBtn.addEventListener('click', () => {
     if (!app.hasModel()) return;
-    try { openStackView(app, { parseSTL, stackDatums, align: state.align }); }
+    // Joint edges typed in the stack view become the part's line-up edges (export follows them).
+    const setDatums = (id, d) => {
+      const a = state.align;
+      if (a?.mode !== 'modular') return;
+      a.datums = { ...(a.datums || {}), [id]: d };
+      if (id === app.models.activeId()) alignModular(app, a, d);
+    };
+    try { openStackView(app, { parseSTL, stackDatums, align: state.align, setDatums }); }
     catch (err) { notice('Stack view', err.message); }
   });
   anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));
