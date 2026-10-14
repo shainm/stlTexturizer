@@ -195,7 +195,7 @@ export function openStackView(app, h) {
   let testTex = null;   // the alignment test pattern, while it's switched on
   function buildMaterials() {
     const snap = variant != null ? app.variants.snapOf(variant) : null;
-    for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat, testTex);
+    for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat, testTex, p.id);
   }
 
   // Each item: a group on the axis at its stacked height, turned by its steps.
@@ -378,7 +378,7 @@ export function openStackView(app, h) {
           : 'Parts are not lined up for modular stacking (Line up parts), so the textures may not meet at the joints and parts cannot be turned.'),
       el('h4', {}, 'Joints per part: seat · next part at (mm above it)'), datumsBox,
       el('p', { class: 'muted' }, 'Set these to where the parts really touch: if a part sits down inside the one below (on a ledge, not the rim), the lower part\'s "next part at" is that ledge. The cyan ring must lie on it.'),
-      el('p', { class: 'muted' }, 'The whole part is textured here (painted masks are not shown).')),
+      el('p', { class: 'muted' }, 'Painted masks show per whole face: strokes finer than a face are blended onto its corners.')),
     el('main', {}, canvas));
   document.body.append(overlay);
 
