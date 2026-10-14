@@ -186,7 +186,7 @@ export function openStackView(app, h) {
   camera.add(key);
   const exactMat = new THREE.MeshStandardMaterial({ color: 0xb98a5a, roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide });
   let exactOn = false, closed = false;
-  let exactBox = null, exactStatus = null;   // built with the sidebar
+  let exactBox = null, exactStatus = null, testBox = null;   // built with the sidebar
 
   const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd400 });
   const ringHot = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -408,7 +408,14 @@ export function openStackView(app, h) {
       el('h3', {}, 'Stack view', el('button', { class: 'x', title: 'Close (Esc)', onclick: () => close() }, '✕')),
       el('h4', {}, 'Texture'), varSel,
       el('label', { title: 'Swap the image for a grid with the same size and placement: thick lines are the tile edges' },
-        el('input', { type: 'checkbox', onchange: (e) => {
+        testBox = el('input', { type: 'checkbox', onchange: (e) => {
+          // The pattern replaces the texture image; the exported meshes are made from the real one: one or the other.
+          if (e.target.checked && exactOn) {
+            exactOn = false;
+            app.stackMesh.cancel();
+            exactBox.checked = false;
+            exactStatus.textContent = '';
+          }
           if (e.target.checked) testTex = testPattern(); else { testTex?.dispose(); testTex = null; }
           buildMaterials(); layout();
           testHint.hidden = !e.target.checked;
@@ -417,6 +424,12 @@ export function openStackView(app, h) {
       el('label', { title: 'Run the real export on each stacked part and show those meshes: slow (about as long as exporting each part), but shows the actual 3D result across the joints. Rebuilds when the texture or joints change.' },
         exactBox = el('input', { type: 'checkbox', onchange: async (e) => {
           if (!e.target.checked) { exactOn = false; app.stackMesh.cancel(); exactStatus.textContent = ''; layout(); return; }
+          if (testTex) {   // see the alignment test pattern's switch: one or the other
+            testTex.dispose(); testTex = null;
+            testBox.checked = false;
+            testHint.hidden = true;
+            buildMaterials();
+          }
           exactOn = true;
           exactStatus.textContent = 'Building…';
           if (await buildExact()) layout();
