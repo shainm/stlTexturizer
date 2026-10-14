@@ -2829,7 +2829,7 @@ function _previewLayers() {
  * faces that NO visible layer textures (the hard masks' intersection), plus
  * the angle masks.
  */
-function _unionFaceWeights(hardFlags, geometry, withAngle) {
+function _unionFaceWeights(hardFlags, geometry, withAngle, s = settings) {
   const triCount = geometry.attributes.position.count / 3;
   const excluded = new Set();
   if (hardFlags.length && hardFlags.every(h => h)) {
@@ -2840,9 +2840,9 @@ function _unionFaceWeights(hardFlags, geometry, withAngle) {
     }
   }
   if (!withAngle) return excluded;
-  const hasAngleMask = settings.bottomAngleLimit > 0 || settings.topAngleLimit > 0;
+  const hasAngleMask = s.bottomAngleLimit > 0 || s.topAngleLimit > 0;
   if (excluded.size === 0 && !hasAngleMask) return null;
-  return buildCombinedFaceWeights(geometry, excluded, false, settings, null);
+  return buildCombinedFaceWeights(geometry, excluded, false, s, null);
 }
 
 /**
@@ -4890,6 +4890,88 @@ function _stackMaterial(snap, geo, frame, mat = null, testTexture = null, modelI
   };
   if (mat) { updateMaterial(mat, list, ms); return mat; }
   return createPreviewMaterial(list, ms);
+}
+
+/**
+ * Stack view: the real exported mesh of another project model — the whole
+ * export pipeline (refine, displace, decimate…) on `geo` (file coordinates)
+ * with a variant's settings and the part's texture frame — so the joints can
+ * be judged on the actual 3D result. Masks apply at whole-face precision (as
+ * in the stack preview). Resolves { positions, normals } or null if superseded.
+ * `onProgress(fraction, label)`.
+ */
+let _stackMeshToken = 0;
+async function _stackMeshBuild(modelId, snap, geo, frame, onProgress = () => {}) {
+  if (isExporting) throw new Error('An export is running — wait for it to finish.');
+  const my = ++_stackMeshToken, isStale = () => _stackMeshToken !== my;
+  const s = snap || _captureUndoSnapshot();
+  const g = { ...settings, ...s.global };
+  const tree = _stackPaintTree(modelId, geo);
+  const triCount = geo.attributes.position.count / 3;
+  const outLayers = [], hardFlags = [], listSettings = [];
+  for (const L of s.layers) {
+    if (!L.visible) continue;
+    const st = L.settings;
+    const entry = _effectiveMapFor(L.mapEntry, st.textureSmoothing, st.invertTexture);
+    if (!entry || !entry.imageData) continue;
+    const slot = tree ? tree.layerSlot(L.id) : -1;
+    const bp = slot >= 0 && tree.hasPaint(slot) ? tree.basePaint(slot) : null;
+    const includeOnly = !!L.includeOnly;
+    let cover = null, hardMasked = null;   // as _layerCoverOn
+    if (!bp) {
+      if (includeOnly) { cover = new Float32Array(triCount * 3); hardMasked = new Uint8Array(triCount).fill(1); }
+    } else if (includeOnly) {
+      cover = Float32Array.from(bp.paint);
+      hardMasked = new Uint8Array(triCount);
+      for (let t = 0; t < triCount; t++) {
+        hardMasked[t] = (!bp.hard[t] && bp.paint[t * 3] === 0 && bp.paint[t * 3 + 1] === 0 && bp.paint[t * 3 + 2] === 0) ? 1 : 0;
+      }
+    } else {
+      cover = new Float32Array(bp.paint.length);
+      for (let k = 0; k < cover.length; k++) cover[k] = 1 - bp.paint[k];
+      hardMasked = Uint8Array.from(bp.hard);
+    }
+    let exclude = null;
+    if (cover) { exclude = new Float32Array(cover.length); for (let k = 0; k < cover.length; k++) exclude[k] = 1 - cover[k]; }
+    const ls = { ...g, ...st, cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null };
+    hardFlags.push(hardMasked);
+    listSettings.push(ls);
+    outLayers.push({
+      imageData: entry.imageData, imgWidth: entry.width, imgHeight: entry.height,
+      settings: ls, exclude, hardFaces: hardMasked,
+      blendAdd: outLayers.length > 0 && !!L.blendAdd,
+    });
+  }
+  if (!outLayers.length) throw new Error('No texture is applied on that variant.');
+  const faceWeights = _unionFaceWeights(hardFlags, geo, true, g);
+
+  const bounds = _attachProfile(computeBounds(geo), geo, listSettings);
+  const min = new THREE.Vector3(frame.min.x, frame.min.y, frame.min.z);
+  const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
+  const mapBounds = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
+  if (frame.modular) mapBounds.modular = { ...frame.modular };
+  _attachProfile(mapBounds, geo, listSettings);
+
+  const label = (stage, p, info) => {
+    switch (stage) {
+      case 'subdivide1': return [0.02 + p * 0.28, t('progress.subdividing')];
+      case 'regularize': return [0.30, t('progress.regularizing')];
+      case 'subdivide2': return [0.32 + p * 0.06, t('progress.subdividing')];
+      case 'displace':   return [0.38 + p * 0.32, t('progress.displacingVertices')];
+      case 'decimate':   return [0.71 + p * 0.25, t('progress.harvestingFlat')];
+      case 'repair':     return [0.96, t('progress.repairingMesh')];
+      case 'stitch':     return [0.98, t('progress.restoringUntextured')];
+    }
+    return null;
+  };
+  onProgress(0.01, t('progress.subdividing'));
+  const result = await runPipeline({
+    positions: geo.attributes.position.array, faceWeights, softExclude: null,
+    imageData: null, imgWidth: 0, imgHeight: 0, layers: outLayers,
+    settings: g, bounds, mapBounds, regularizeOpts: _regularizeOpts(), mode: 'export',
+  }, (stage, p, info) => { const r = label(stage, p, info); if (r) onProgress(r[0], r[1]); }, isStale);
+  if (!result || isStale()) return null;
+  return { positions: result.positions, normals: result.normals || null };
 }
 
 /** Rebuild the preview material's per-layer uniforms and global settings. */
@@ -7175,6 +7257,10 @@ initPersonal({
   stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?, testTexture?, modelId?) → preview material
   setSessionExtra: (fn) => { _sessionExtra = fn; },
   onSessionRestored: (fn) => { _sessionRestoredHooks.push(fn); },
+  stackMesh: {   // stack view: the real exported mesh of a model (see _stackMeshBuild)
+    build: _stackMeshBuild,
+    cancel: () => { _stackMeshToken++; },
+  },
   stackLayout: { get: () => _stackLayout, set: (v) => { _stackLayout = v; _scheduleSessionSave(); } },
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
