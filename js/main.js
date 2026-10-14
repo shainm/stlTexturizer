@@ -1692,6 +1692,7 @@ function wireEvents() {
     _autoSaveSettings();
   });
 
+  document.getElementById('cylinder-panel-reset')?.addEventListener('click', () => cylinderResetBtn.click());
   cylinderResetBtn.addEventListener('click', () => {
     settings.cylinderCenterX = null;
     settings.cylinderCenterY = null;
