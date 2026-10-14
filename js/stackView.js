@@ -11,6 +11,8 @@
  * and Shift-dragged up or down the stack to reorder it (they snap back onto
  * the joints) or sideways to turn them step by step. A plain drag always orbits.
  * The textures follow each part's export frame, so what joins here joins in print.
+ * "Exported mesh" swaps the live texture preview for the real exported meshes
+ * (the full export pipeline, per part), to judge the joints on the 3D result.
  */
 
 import { THREE } from './threeCompat.js';
@@ -176,6 +178,15 @@ export function openStackView(app, h) {
   controls.enableDamping = true;
   const stack = new THREE.Group();
   scene.add(stack);
+  // For the exported meshes (the shader preview lights itself).
+  scene.add(camera);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3328, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.3);
+  key.position.set(1, 0.4, 1.2);
+  camera.add(key);
+  const exactMat = new THREE.MeshStandardMaterial({ color: 0xb98a5a, roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide });
+  let exactOn = false, closed = false;
+  let exactBox = null, exactStatus = null;   // built with the sidebar
 
   const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd400 });
   const ringHot = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -196,6 +207,38 @@ export function openStackView(app, h) {
   function buildMaterials() {
     const snap = variant != null ? app.variants.snapOf(variant) : null;
     for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat, testTex, p.id);
+    // The exported meshes were made with the old joints / texture: drop them.
+    for (const p of parts.values()) { p.exactGeo?.dispose(); p.exactGeo = null; }
+    if (exactOn) {
+      exactOn = false;
+      app.stackMesh.cancel();
+      if (exactBox) exactBox.checked = false;
+      if (exactStatus) exactStatus.textContent = 'The texture or joints changed — tick again to rebuild the exported meshes.';
+    }
+  }
+
+  // Build every stacked part's exported mesh (one at a time, as an export does).
+  async function buildExact() {
+    const snap = variant != null ? app.variants.snapOf(variant) : null;
+    const used = [...new Set(items.map(it => it.model))].map(id => parts.get(id));
+    try {
+      for (let k = 0; k < used.length; k++) {
+        const p = used[k];
+        if (p.exactGeo) continue;
+        const r = await app.stackMesh.build(p.id, snap, p.geo, frameFor(p),
+          (f, label) => { if (exactStatus && !closed) exactStatus.textContent = `${p.name} (${k + 1}/${used.length}): ${label} ${Math.round(f * 100)}%`; });
+        if (!r || closed || !exactOn) return false;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(r.positions, 3));
+        if (r.normals) geo.setAttribute('normal', new THREE.BufferAttribute(r.normals, 3)); else geo.computeVertexNormals();
+        p.exactGeo = geo;
+      }
+      if (exactStatus) exactStatus.textContent = 'Showing the exported meshes (no masks colouring, one colour).';
+      return true;
+    } catch (err) {
+      if (exactStatus && !closed) exactStatus.textContent = `Could not build: ${err.message}`;
+      return false;
+    }
   }
 
   // Each item: a group on the axis at its stacked height, turned by its steps.
@@ -243,7 +286,8 @@ export function openStackView(app, h) {
       const g = new THREE.Group();
       g.position.set(0, 0, base);
       g.rotation.z = it.turn * stepRad;
-      const mesh = new THREE.Mesh(p.geo, p.mat);
+      const exact = exactOn && p.exactGeo;
+      const mesh = new THREE.Mesh(exact ? p.exactGeo : p.geo, exact ? exactMat : p.mat);
       mesh.position.set(-p.axis.x, -p.axis.y, 0);
       mesh.userData.item = groups.length;
       g.add(mesh);
@@ -335,6 +379,8 @@ export function openStackView(app, h) {
   function select(i) { selected = i; renderList(); showRing(); }
 
   const close = () => {
+    closed = true;
+    app.stackMesh.cancel();
     remember();
     cancelAnimationFrame(raf);
     ro.disconnect();
@@ -342,6 +388,8 @@ export function openStackView(app, h) {
     controls.dispose();
     for (const p of parts.values()) { p.geo.dispose(); p.mat?.dispose(); }
     testTex?.dispose();
+    for (const p of parts.values()) p.exactGeo?.dispose();
+    exactMat.dispose();
     renderer.dispose();
     overlay.remove();
   };
@@ -366,6 +414,16 @@ export function openStackView(app, h) {
           testHint.hidden = !e.target.checked;
         } }), ' Alignment test pattern'),
       testHint,
+      el('label', { title: 'Run the real export on each stacked part and show those meshes: slow (about as long as exporting each part), but shows the actual 3D result across the joints. Rebuilds when the texture or joints change.' },
+        exactBox = el('input', { type: 'checkbox', onchange: async (e) => {
+          if (!e.target.checked) { exactOn = false; app.stackMesh.cancel(); exactStatus.textContent = ''; layout(); return; }
+          exactOn = true;
+          exactStatus.textContent = 'Building…';
+          if (await buildExact()) layout();
+          else if (!closed && !exactOn) { /* switched off meanwhile */ }
+          else if (!closed) { exactOn = false; exactBox.checked = false; }
+        } }), ' Exported mesh preview (slow)'),
+      exactStatus = el('p', { class: 'muted' }),
       el('label', { title: 'Yellow: each part\'s bottom joint. Cyan: where it says the next part sits. Drawn through the parts.' },
         el('input', { type: 'checkbox', checked: true, onchange: (e) => { jointsOn = e.target.checked; showJoints(); } }), ' Show joint rings'),
       el('h4', {}, 'Stack (top first)'), list,
