@@ -8,6 +8,11 @@
  * as Ctrl+Z (and can itself be undone). Loading another model keeps them (minus
  * their painted surfaces, which belong to the old model), so they can be applied
  * to every model of a project; they are saved with projects and shared settings.
+ *
+ * The first chip is the default, like a slicer's base profile: a setting
+ * changed on it carries over to every other chip that still had the old
+ * value, so the others only keep what was changed on purpose. Dragging
+ * another chip to the front makes it the default.
  */
 
 const PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 7.5v9M7.5 12h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -57,9 +62,11 @@ export function chipReorder(chip, index, kind, onMove) {
  * @param {(snap: object) => void} o.apply   restore a snapshot
  * @param {(a: object, b: object) => boolean} o.equal
  * @param {() => boolean} o.hasModel
+ * @param {(snap: object, before: object, after: object) => object} o.inherit
+ *   `snap` with every setting that matched `before` (the default's old state) taken from `after`
  * @returns {{ clear: () => void, refresh: () => void }}
  */
-export function initVariants({ host, t, capture, apply, equal, hasModel, onChange = () => {} }) {
+export function initVariants({ host, t, capture, apply, equal, hasModel, inherit = (s) => s, onChange = () => {} }) {
   let variants = [];      // { id, snap, label, tip }
   let nextId = 1;
   let activeId = null;    // the chip last saved or restored
@@ -83,8 +90,14 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
     if (!v || busy || Date.now() - appliedAt < 800) return;
     const now = capture();
     if (equal(v.snap, now)) return;
-    const d = describe(now);
-    Object.assign(v, { snap: now, tip: d.tip }, v.custom ? {} : { label: d.label });
+    if (v === variants[0]) {   // the default: carry the change to the others
+      for (const o of variants.slice(1)) setSnap(o, inherit(o.snap, v.snap, now));
+    }
+    setSnap(v, now);
+  }
+  function setSnap(v, snap) {
+    const d = describe(snap);
+    Object.assign(v, { snap, tip: d.tip }, v.custom ? {} : { label: d.label });
   }
 
   // Double-click a chip to rename it; empty goes back to the automatic name.
@@ -138,7 +151,9 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'variant-btn';
-      btn.title = `${v.tip}\n${t('variants.restoreTip')} · ${t('variants.renameTip')}`;
+      const isDefault = i === 0 && variants.length > 1;
+      if (isDefault) chip.classList.add('default');
+      btn.title = `${isDefault ? 'Default: settings changed here carry over to the others\n' : ''}${v.tip}\n${t('variants.restoreTip')} · ${t('variants.renameTip')}`;
       const num = document.createElement('b');
       num.textContent = String(i + 1);
       const name = document.createElement('span');
@@ -194,6 +209,12 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
 
   // Edits mark the active chip as modified; settle first so a slider drag isn't a render per tick.
   const refresh = () => { clearTimeout(timer); timer = setTimeout(() => { keepEdits(); render(); }, 350); };
+
+  /** The default chip's snapshot while another chip is being edited, else null. */
+  function defaultSnap() {
+    if (variants.length < 2 || activeId == null || activeId === variants[0].id) return null;
+    return variants[0].snap;
+  }
 
   /** The saved variants in chip order: [{ id, num, label }]. */
   function list() {
@@ -260,6 +281,7 @@ export function initVariants({ host, t, capture, apply, equal, hasModel, onChang
     restore,
     refresh,
     list,
+    defaultSnap,
     runEach,
   };
 }

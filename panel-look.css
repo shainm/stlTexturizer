@@ -235,6 +235,21 @@ main.sidebar-collapsed .sidebar-toggle { right: 6px; }
   background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
   color: var(--text);
 }
+/* The default variant (first chip): the others inherit from it. */
+.variant-chip.default .variant-btn b { color: var(--accent); }
+/* ↺ beside a setting the open variant changed from the default. */
+.variant-reset {
+  margin-left: 4px;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.variant-reset:hover { color: var(--text); }
 .variant-x {
   position: absolute;
   top: -5px;

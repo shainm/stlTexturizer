@@ -6730,6 +6730,86 @@ _restoreSessionSettings();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
 
+// ── Default variant (the first chip, like a slicer's base profile) ──────────
+// A change on it carries over to every variant that still had the old value
+// (texture, layer settings, global settings; paint stays per variant). While
+// another variant is open, settings that differ from the default get a ↺
+// that puts the default's value back.
+
+/** `snap` with every setting that matched `before` taken from `after`. */
+function _inheritSnapshot(snap, before, after) {
+  const out = { ...snap, global: { ...snap.global }, layers: snap.layers.map(l => ({ ...l, settings: { ...l.settings } })) };
+  const follow = (dst, a, b, k) => { if (a[k] !== b[k] && dst[k] === a[k]) dst[k] = b[k]; };
+  for (const k of GLOBAL_KEYS) follow(out.global, before.global, after.global, k);
+  out.layers.forEach((l, i) => {
+    const a = before.layers[i], b = after.layers[i];
+    if (!a || !b || a.id !== b.id) return;
+    for (const k of LAYER_KEYS) follow(l.settings, a.settings, b.settings, k);
+    for (const k of ['visible', 'blendAdd']) follow(l, a, b, k);
+    const tex = (o) => `${o.mapName ?? ''}|${o.customId ?? ''}`;
+    if (tex(a) !== tex(b) && tex(l) === tex(a)) Object.assign(l, { mapName: b.mapName, customId: b.customId, mapEntry: b.mapEntry });
+  });
+  return out;
+}
+
+// Setting → the control whose row gets the ↺ (the cylinder axis is per model, so it has none).
+const _OVERRIDE_CONTROLS = {
+  mappingMode: 'mapping-mode', scaleU: 'scale-u', scaleV: 'scale-v', offsetU: 'offset-u', offsetV: 'offset-v',
+  rotation: 'rotation', textureHeight: 'amplitude', invertDisplacement: 'invert-displacement',
+  invertTexture: 'invert-texture', textureSmoothing: 'texture-smoothing', symmetricDisplacement: 'symmetric-displacement',
+  mappingBlend: 'seam-blend', seamBandWidth: 'seam-band-width', capAngle: 'cap-angle',
+  boundaryFalloff: 'boundary-falloff', boundaryFalloffCurve: 'falloff-curve-linear', snapSeamlessWrap: 'cylinder-snap-toggle',
+  noDownwardZ: 'no-downward-z-chk', extendUntextured: 'extend-untextured-chk', smoothBottom: 'smooth-bottom-chk',
+  harvestFlatFaces: 'harvest-flat-chk', harvestTol: 'harvest-tol', preserveUntextured: 'preserve-untextured-chk',
+  printZScaleOn: 'print-z-chk', printZScale: 'print-z-scale', bottomAngleLimit: 'bottom-angle-limit',
+  topAngleLimit: 'top-angle-limit', refineLength: 'refine-length', maxTriangles: 'max-triangles',
+};
+const _OVERRIDE_PAIRS = { textureHeight: ['amplitude'] };   // set together with the key
+
+function _renderOverrideMarks() {
+  document.querySelectorAll('.variant-reset').forEach(b => b.remove());
+  const base = _variants?.defaultSnap();
+  if (!base) return;
+  const now = _captureUndoSnapshot();
+  const lb = base.layers[now.active], ln = now.layers[now.active];
+  const rows = new Map();   // form row → keys that differ there
+  for (const [k, id] of Object.entries(_OVERRIDE_CONTROLS)) {
+    const perLayer = LAYER_KEYS.includes(k);
+    if (perLayer && !(lb && ln)) continue;
+    const a = perLayer ? lb.settings[k] : base.global[k], b = perLayer ? ln.settings[k] : now.global[k];
+    if (a === undefined || a === b) continue;
+    const row = document.getElementById(id)?.closest('.form-row');
+    if (!row) continue;
+    if (!rows.has(row)) rows.set(row, []);
+    rows.get(row).push(k);
+  }
+  for (const [row, keys] of rows) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'variant-reset';
+    btn.textContent = '↺';
+    btn.title = 'Changed from the default variant (1) — click to use its value';
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _resetToDefault(keys); });
+    (row.querySelector('label, .form-row-label') || row).append(btn);
+  }
+}
+
+/** Put the default variant's value back for these settings of the open variant. */
+function _resetToDefault(keys) {
+  const base = _variants?.defaultSnap();
+  if (!base) return;
+  const snap = _captureUndoSnapshot();
+  const L = snap.layers[snap.active], B = base.layers[snap.active];
+  for (const k of keys.flatMap(k => [k, ...(_OVERRIDE_PAIRS[k] || [])])) {
+    if (LAYER_KEYS.includes(k)) { if (B) L.settings[k] = B.settings[k]; }
+    else snap.global[k] = base.global[k];
+  }
+  _applyUndoSnapshot(snap);
+  _scheduleUndoCapture();
+  _variants.refresh();
+  _renderOverrideMarks();
+}
+
 // Variants: saved setting sets beside the bottom bar (js/variants.js).
 _variants = initVariants({
   host: document.getElementById('variant-bar'),
@@ -6738,7 +6818,8 @@ _variants = initVariants({
   apply: _applyUndoSnapshot,
   equal: _undoSnapshotsEqual,
   hasModel: () => !!currentGeometry,
-  onChange: _scheduleSessionSave,   // tabs are part of the resumable session
+  inherit: _inheritSnapshot,
+  onChange: () => { _scheduleSessionSave(); _renderOverrideMarks(); },   // tabs are part of the resumable session
 });
 if (_settingsPanel) {
   _settingsPanel.addEventListener('input',  _variants.refresh);
