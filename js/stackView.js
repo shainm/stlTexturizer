@@ -60,17 +60,40 @@ function partGeometry(pos) {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.computeVertexNormals();   // non-indexed → face normals
   const n = pos.length / 3, fn = geo.attributes.normal.array;
-  // Smooth normals: face normals summed over each welded position.
-  const acc = new Map(), key = (i) => `${Math.round(pos[i] * 1e4)},${Math.round(pos[i + 1] * 1e4)},${Math.round(pos[i + 2] * 1e4)}`;
-  for (let i = 0; i < pos.length; i += 3) {
-    const k = key(i); let a = acc.get(k);
-    if (!a) acc.set(k, a = [0, 0, 0]);
-    a[0] += fn[i]; a[1] += fn[i + 1]; a[2] += fn[i + 2];
+  // Smooth normals, as the app's own preview has them: at each welded vertex, the
+  // (area-weighted) average of the faces there that are within 30° of this corner's
+  // face. Hard edges and clips stay crisp; round walls shade smoothly. (Averaging
+  // every face smeared the shading across the part's sharp edges.)
+  const COS = Math.cos(Math.PI / 6);
+  const key = (i) => `${Math.round(pos[i] * 1e4)},${Math.round(pos[i + 1] * 1e4)},${Math.round(pos[i + 2] * 1e4)}`;
+  const groups = new Map();   // welded position → corner indices (first coordinate offset of each corner)
+  const area = new Float32Array(n);
+  for (let c = 0; c < n; c += 3) {
+    const o = c * 3;
+    const e1x = pos[o + 3] - pos[o], e1y = pos[o + 4] - pos[o + 1], e1z = pos[o + 5] - pos[o + 2];
+    const e2x = pos[o + 6] - pos[o], e2y = pos[o + 7] - pos[o + 1], e2z = pos[o + 8] - pos[o + 2];
+    const a = Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+    area[c] = area[c + 1] = area[c + 2] = a;
+    for (let v = 0; v < 3; v++) {
+      const k = key(o + v * 3);
+      const g = groups.get(k);
+      if (g) g.push(c + v); else groups.set(k, [c + v]);
+    }
   }
   const sn = new Float32Array(pos.length);
-  for (let i = 0; i < pos.length; i += 3) {
-    const a = acc.get(key(i)), l = Math.hypot(a[0], a[1], a[2]) || 1;
-    sn[i] = a[0] / l; sn[i + 1] = a[1] / l; sn[i + 2] = a[2] / l;
+  for (const g of groups.values()) {
+    for (const ci of g) {
+      const fx = fn[ci * 3], fy = fn[ci * 3 + 1], fz = fn[ci * 3 + 2];
+      let sx = 0, sy = 0, sz = 0;
+      for (const cj of g) {
+        const nx = fn[cj * 3], ny = fn[cj * 3 + 1], nz = fn[cj * 3 + 2];
+        if (fx * nx + fy * ny + fz * nz < COS) continue;
+        const w = area[cj];
+        sx += nx * w; sy += ny * w; sz += nz * w;
+      }
+      const l = Math.hypot(sx, sy, sz);
+      sn[ci * 3] = l > 1e-12 ? sx / l : fx; sn[ci * 3 + 1] = l > 1e-12 ? sy / l : fy; sn[ci * 3 + 2] = l > 1e-12 ? sz / l : fz;
+    }
   }
   geo.setAttribute('faceNormal', new THREE.BufferAttribute(fn.slice(), 3));
   geo.setAttribute('smoothNormal', new THREE.BufferAttribute(sn, 3));
