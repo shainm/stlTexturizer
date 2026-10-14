@@ -274,7 +274,7 @@ export function openStackView(app, h) {
       if (i < items.length - 1) joints.add(circle(radiusAt(p, d.seat + d.pitch) + 0.8, bases[i] + d.seat + d.pitch, topLine));
     });
   }
-  let jointsOn = true;
+  let jointsOn = false;
 
   function layout() {
     stack.clear();
@@ -425,7 +425,7 @@ export function openStackView(app, h) {
         } }), ' Exported mesh preview (slow)'),
       exactStatus = el('p', { class: 'muted' }),
       el('label', { title: 'Yellow: each part\'s bottom joint. Cyan: where it says the next part sits. Drawn through the parts.' },
-        el('input', { type: 'checkbox', checked: true, onchange: (e) => { jointsOn = e.target.checked; showJoints(); } }), ' Show joint rings'),
+        el('input', { type: 'checkbox', onchange: (e) => { jointsOn = e.target.checked; showJoints(); } }), ' Show joint rings'),
       el('h4', {}, 'Stack (top first)'), list,
       el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
         el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),
