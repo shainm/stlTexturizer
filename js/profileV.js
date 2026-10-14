@@ -117,6 +117,8 @@ export function buildProfile(geometry, center) {
   // and back down, and V would grow downwards there (the texture upside down).
   const inward = new Uint8Array(start[nv]);
   const triInward = new Uint8Array(triCount);
+  const triN = new Float32Array(triCount * 3);     // unit face normals
+  const triRadial = new Float32Array(triCount);    // how much each face looks away from the axis
   for (let t = 0; t < triCount; t++) {
     const a = ids[t * 3], b = ids[t * 3 + 1], c = ids[t * 3 + 2];
     // Cost = height travelled, plus radius travelled only on near-flat faces.
@@ -134,6 +136,8 @@ export function buildProfile(geometry, center) {
     const radial = cr > 1e-9 ? ((e1y * e2z - e1z * e2y) * cx + (e1z * e2x - e1x * e2z) * cy) / (nl * cr) : 0;
     const inw = radial < -0.3 ? 1 : 0;
     triInward[t] = inw;
+    triRadial[t] = radial;
+    triN[t * 3] = (e1y * e2z - e1z * e2y) / nl; triN[t * 3 + 1] = (e1z * e2x - e1x * e2z) / nl; triN[t * 3 + 2] = nzv;
     const hRaw = Math.min(1, Math.max(0, (Math.abs(nzv) - FLAT_LO) / (FLAT_HI - FLAT_LO)));
     const h = hRaw * hRaw * (3 - 2 * hRaw);
     const w = (p, q) => Math.abs(zArr[q] - zArr[p]) + h * Math.abs(rhoArr[q] - rhoArr[p]);
@@ -300,7 +304,35 @@ export function buildProfile(geometry, center) {
       queue[qt++] = n;
     }
   }
-  return { nr, nz, cell, zMin, data };
+  // Outer joint edges: level sharp edges (> 30°, or open) beside a face that
+  // looks away from the axis, as [rho, z] per vertex. Joints are found on these
+  // (fitProfileToJoints): a wall's top, not a lip around it at the same height.
+  const levelTol = span * 1e-4, cos30 = Math.cos(Math.PI / 6);
+  const edgeTris = new Map();
+  for (let t = 0; t < triCount; t++) {
+    for (let e = 0; e < 3; e++) {
+      const a = ids[t * 3 + e], b = ids[t * 3 + (e + 1) % 3];
+      if (a === b || Math.abs(zArr[a] - zArr[b]) > levelTol) continue;
+      const key = a < b ? a * nv + b : b * nv + a;
+      const l = edgeTris.get(key);
+      if (l) l.push(t); else edgeTris.set(key, [t]);
+    }
+  }
+  const rimVerts = new Set();
+  for (const [key, ts] of edgeTris) {
+    let sharp = ts.length !== 2;
+    if (!sharp) {
+      const [p, q] = ts;
+      sharp = triN[p * 3] * triN[q * 3] + triN[p * 3 + 1] * triN[q * 3 + 1] + triN[p * 3 + 2] * triN[q * 3 + 2] < cos30;
+    }
+    if (!sharp || !ts.some(t => triRadial[t] > 0.3)) continue;
+    rimVerts.add(Math.floor(key / nv)); rimVerts.add(key % nv);
+  }
+  const rims = new Float32Array(rimVerts.size * 2);
+  let ri = 0;
+  for (const v of rimVerts) { rims[ri++] = rhoArr[v]; rims[ri++] = zArr[v]; }
+
+  return { nr, nz, cell, zMin, data, rims };
 }
 
 /**
@@ -334,7 +366,17 @@ export function fitProfileToJoints(prof, seatZ, topZ, tile, seatV) {
     }
     return null;
   };
-  const vSeat = ringV(seatZ), vTop = ringV(topZ);
+  // Prefer the real joint edge: of the outer edges at that height, the one
+  // nearest the axis (the wall the next part sits on, not a lip around it).
+  const edgeV = (z) => {
+    const r = prof.rims;
+    if (!r) return null;
+    const tol = Math.max(0.06, cell * 0.5);
+    let best = Infinity;
+    for (let i = 0; i < r.length; i += 2) if (Math.abs(r[i + 1] - z) <= tol && r[i] < best) best = r[i];
+    return best < Infinity ? sampleProfile(prof, best + cell, z) : null;   // a cell out: on the wall, not the rim top
+  };
+  const vSeat = edgeV(seatZ) ?? ringV(seatZ), vTop = edgeV(topZ) ?? ringV(topZ);
   if (vSeat == null || vTop == null) return prof;
   const L = vTop - vSeat;
   if (!(L > tile * 0.25)) return prof;
