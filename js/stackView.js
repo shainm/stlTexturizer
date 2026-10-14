@@ -105,12 +105,13 @@ export function openStackView(app, h) {
   const models = app.models.list();
   const activeId = app.models.activeId();
   const parts = new Map();
+  let sharedXY = align?.xy || null;   // one axis for every part: the line-up's, else the first part's
   for (const m of models) {
     const raw = app.models.stl(m.id);
     if (!raw) continue;
     const pos = h.parseSTL(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
     const own = xyBounds(pos);
-    const xy = align?.xy || own;   // the same XY frame "Line up parts" textures with
+    const xy = sharedXY ??= own;   // the same XY frame "Line up parts" textures with
     const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
     const detected = h.stackDatums(pos, axis);
     const remembered = saved?.datums?.[m.id];

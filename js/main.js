@@ -5945,12 +5945,16 @@ function _sessionThumb() {
   } catch (err) { console.warn('Session thumbnail failed:', err); return null; }
 }
 
+// personal.js adds its own state (the Line up parts setup) to the resumable session.
+let _sessionExtra = null;            // () => extra settings.json fields
+const _sessionRestoredHooks = [];    // (settings.json payload) after a session was resumed
+
 function _scheduleSessionSave() {
   if (_autoSavePaused || !currentGeometry || !_userModelLoaded) return;   // never overwrite with an empty session
   clearTimeout(_sessionSaveTimer);
   _sessionSaveTimer = setTimeout(async () => {
     try {
-      const zipped = await _buildProjectZip(true, true);
+      const zipped = await _buildProjectZip(true, true, _sessionExtra?.() || null);
       const thumb = _sessionThumb();
       await _sessionKv('readwrite', s => s.put({
         zip: zipped, name: currentStlName || '', time: Date.now(), thumb,
@@ -5984,6 +5988,9 @@ async function _offerResumeSession() {
     try {
       await importProject(new File([rec.zip], (rec.name || 'session') + '.bumpmesh'), { mode: 'all' });
       await _restoreSessionVariants(rec);
+      let data = null;
+      try { data = JSON.parse(strFromU8(unzipSync(rec.zip, { filter: f => f.name === 'settings.json' })['settings.json'])); } catch { /* none */ }
+      for (const fn of _sessionRestoredHooks) await fn(data);
     } catch (err) { alert(t('alerts.importFailed', { msg: err.message })); }
   } else {
     try { await _sessionKv('readwrite', s => s.delete('last')); } catch { /* ignore */ }
@@ -7127,6 +7134,8 @@ initPersonal({
   },
   hasModel: () => !!currentGeometry,
   stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?) → preview material
+  setSessionExtra: (fn) => { _sessionExtra = fn; },
+  onSessionRestored: (fn) => { _sessionRestoredHooks.push(fn); },
   stackLayout: { get: () => _stackLayout, set: (v) => { _stackLayout = v; _scheduleSessionSave(); } },
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers

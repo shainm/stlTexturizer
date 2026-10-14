@@ -736,6 +736,9 @@ function initAlignControl(app) {
     catch (err) { notice('Stack view', err.message); }
   });
   anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));
+  // The line-up rides along in the resumable session too (a page reload keeps it).
+  app.setSessionExtra(() => ({ pds: { align: state.align ? { ...state.align } : null } }));
+  app.onSessionRestored(async (data) => { if (data?.pds?.align) await restoreAlign(app, data.pds, true); });
   // Another part of the project swapped in: line it up the same way (its own joint edges, the shared axis and steps).
   app.models.onSwapped(async (id) => {
     const a = state.align;
