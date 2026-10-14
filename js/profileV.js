@@ -15,7 +15,7 @@
  * Arc length cannot be computed from one point, so it is measured once on the
  * mesh: every vertex gets its shortest profile distance (Dijkstra, edge cost =
  * height travelled, plus radius travelled on near-flat faces, so going around
- * the axis or sideways along a lobed wall is free) from the vertex nearest the axis at the bottom of its connected piece. The
+ * the axis or sideways along a lobed wall is free) from the vertex nearest the axis among the lowest of its connected piece. The
  * values are baked into a 2D grid over (radius, height) that the CPU mapping
  * and the preview shader both sample.
  *
@@ -151,21 +151,23 @@ export function buildProfile(geometry, center) {
     if (zArr[v] > zMax) zMax = zArr[v];
   }
 
-  // Seeds: per connected piece, the lowest vertex among those nearest the axis.
+  // Seeds: per connected piece, the vertex nearest the axis among its lowest
+  // ones. (Nearest the axis first would start a part whose bore narrows towards
+  // the top at the top, and V would run downwards over the whole part.)
   const comp = new Int32Array(nv).fill(-1);
   const seeds = [];
   const stack = new Int32Array(nv);
-  const rhoTol = rhoMax * 1e-3;
+  const zTol = Math.max(zMax - zMin, rhoMax) * 1e-3;
   for (let s = 0; s < nv; s++) {
     if (comp[s] !== -1) continue;
     let sp = 0, count = 0;
-    let minRho = Infinity;
+    let lowZ = Infinity;
     const members = [];
     stack[sp++] = s; comp[s] = s;
     while (sp) {
       const v = stack[--sp];
       members.push(v);
-      if (rhoArr[v] < minRho) minRho = rhoArr[v];
+      if (zArr[v] < lowZ) lowZ = zArr[v];
       for (let e = start[v]; e < start[v + 1]; e++) {
         const w = adj[e];
         if (comp[w] === -1) { comp[w] = s; stack[sp++] = w; }
@@ -174,8 +176,8 @@ export function buildProfile(geometry, center) {
     }
     let best = -1;
     for (const v of members) {
-      if (rhoArr[v] > minRho + rhoTol) continue;
-      if (best === -1 || zArr[v] < zArr[best]) best = v;
+      if (zArr[v] > lowZ + zTol) continue;
+      if (best === -1 || rhoArr[v] < rhoArr[best]) best = v;
     }
     seeds.push(best);
   }
