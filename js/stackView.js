@@ -7,7 +7,8 @@
  * part). Parts can't be moved, only turned around the axis, and only in the
  * steps set in "Line up parts" ("Parts may sit turned in steps of 1/N"): pick
  * a part, then drag its ring — it clicks from step to step like a slicer's
- * rotate tool. Parts can be added any number of times (e.g. several middles).
+ * rotate tool. Parts can be added any number of times (e.g. several middles),
+ * and dragged up or down the stack to reorder it (they snap back onto the joints).
  * The textures follow each part's export frame, so what joins here joins in print.
  */
 
@@ -294,7 +295,7 @@ export function openStackView(app, h) {
       el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
         el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),
       steps
-        ? el('p', { class: 'muted' }, `Click a part, then drag its ring to turn it — it snaps in steps of ${+(360 / steps).toFixed(2)}° (1/${steps}). ←/→ turn it one step.`)
+        ? el('p', { class: 'muted' }, `Drag a part up or down to move it in the stack. Click a part, then drag its ring to turn it — it snaps in steps of ${+(360 / steps).toFixed(2)}° (1/${steps}). ←/→ turn it one step.`)
         : el('p', { class: 'muted' }, modular
           ? 'Turning is off: tick "Parts may sit turned in steps" in Line up parts to turn parts here.'
           : 'Parts are not lined up for modular stacking (Line up parts), so the textures may not meet at the joints and parts cannot be turned.'),
@@ -322,6 +323,33 @@ export function openStackView(app, h) {
     const pl = new THREE.Plane(new THREE.Vector3(0, 0, 1), -ring.position.z), pt = new THREE.Vector3();
     return ray.ray.intersectPlane(pl, pt) ? Math.atan2(pt.y, pt.x) : null;
   };
+  // Moving a part along the stack: it follows the pointer up and down (on a
+  // vertical plane through the axis, facing the camera); passing another
+  // part's middle swaps their places, and letting go seats it on the joints.
+  const centerOf = (i) => { const o = parts.get(items[i].model).own; return bases[i] + o.min.z + o.size.z / 2; };
+  const heightAt = () => {
+    const n = camera.getWorldDirection(new THREE.Vector3()).setZ(0);
+    if (n.lengthSq() < 1e-6) n.set(1, 0, 0);
+    const pt = new THREE.Vector3();
+    return ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n.normalize(), new THREE.Vector3()), pt) ? pt.z : null;
+  };
+  let move = null;   // { item, grabZ (pointer height − part base at grab), x, y, moving, sel (the selected item) }
+  function dragPart(z) {
+    const it = move.item, i = items.indexOf(it);
+    const own = parts.get(it.model).own;
+    const center = z - move.grabZ + own.min.z + own.size.z / 2;
+    const others = items.filter(o => o !== it);
+    const centers = items.map((_, j) => centerOf(j)).filter((_, j) => j !== i);
+    const k = centers.filter(c => c < center).length;
+    if (k !== i) {
+      items = [...others.slice(0, k), it, ...others.slice(k)];
+      if (move.sel) selected = items.indexOf(move.sel);
+      layout();
+      renderList();
+    }
+    groups[items.indexOf(it)].position.z = z - move.grabZ;
+  }
+
   let drag = null, down = null;
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
@@ -334,12 +362,33 @@ export function openStackView(app, h) {
       ringMesh.material = ringHot;
       canvas.setPointerCapture(e.pointerId);
       e.preventDefault();
+      e.stopImmediatePropagation();   // the orbit controls never see it
+      return;
+    }
+    const hit = ray.intersectObjects(stack.children, true)[0];
+    if (hit) {
+      const z = heightAt(), i = hit.object.userData.item;
+      if (z == null) return;
+      move = { item: items[i], grabZ: z - bases[i], x: e.clientX, y: e.clientY, moving: false, sel: items[selected] };
+      controls.enabled = false;
+      canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopImmediatePropagation();   // the orbit controls never see it
       return;
     }
     down = { x: e.clientX, y: e.clientY };
-  });
+  }, true);   // capture: runs before the orbit controls' own handler
   canvas.addEventListener('pointermove', (e) => {
     setRay(e);
+    if (move) {
+      if (!move.moving && Math.hypot(e.clientX - move.x, e.clientY - move.y) < 4) return;
+      move.moving = true;
+      canvas.style.cursor = 'ns-resize';
+      ring.visible = false;
+      const z = heightAt();
+      if (z != null) dragPart(z);
+      return;
+    }
     if (drag) {
       const a = angleAt();
       if (a == null) return;
@@ -351,9 +400,24 @@ export function openStackView(app, h) {
       if (Math.abs(d) > Math.PI * 0.75) { drag.start = a; drag.turn = items[selected].turn; }
       return;
     }
-    if (ringMesh && !down) canvas.style.cursor = ray.intersectObject(ringMesh, false).length ? 'grab' : '';
+    if (!down) canvas.style.cursor = ringMesh && ray.intersectObject(ringMesh, false).length ? 'grab'
+      : ray.intersectObjects(stack.children, true).length ? 'move' : '';
   });
   canvas.addEventListener('pointerup', (e) => {
+    if (move) {
+      const { item, moving, sel } = move;
+      move = null;
+      controls.enabled = true;
+      ring.visible = true;
+      canvas.style.cursor = '';
+      if (moving) {
+        selected = sel ? items.indexOf(sel) : -1;
+        layout();   // seat everything on its joints again
+        renderList();
+        remember();
+      } else select(items.indexOf(item) === selected ? -1 : items.indexOf(item));   // a click picks the part
+      return;
+    }
     if (drag) {
       drag = null;
       controls.enabled = true;
