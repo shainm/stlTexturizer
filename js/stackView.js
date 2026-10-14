@@ -38,8 +38,6 @@ const STYLE = `
 .pds-stack canvas { display: block; width: 100%; height: 100%; }
 `;
 
-// Remembered between openings (this session): the stack and per-part datums.
-let _memory = null;   // { variant, items: [{ model, turn }], datums: { [modelId]: { seat, pitch } } }
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -101,6 +99,8 @@ export function openStackView(app, h) {
   const stepRad = steps ? 2 * Math.PI / steps : 0;
 
   // ── Parts (one per project model) ──
+  // How it was stacked last time (saved with the project): { variantNum, items: [{ model, turn }], datums: { [modelId]: { seat, pitch } } }
+  const saved = app.stackLayout.get();
   const models = app.models.list();
   const activeId = app.models.activeId();
   const parts = new Map();
@@ -112,7 +112,7 @@ export function openStackView(app, h) {
     const xy = align?.xy || own;   // the same XY frame "Line up parts" textures with
     const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
     const detected = h.stackDatums(pos, axis);
-    const remembered = _memory?.datums?.[m.id];
+    const remembered = saved?.datums?.[m.id];
     const datums = remembered || (modular && (align.datums?.[m.id] || (m.id === activeId ? { seat: align.seat, pitch: align.pitch } : null))) || detected;
     let rMax = 0;
     for (let i = 0; i < pos.length; i += 3) rMax = Math.max(rMax, Math.hypot(pos[i] - axis.x, pos[i + 1] - axis.y));
@@ -120,13 +120,17 @@ export function openStackView(app, h) {
   }
   if (!parts.size) return;
 
-  let items = (_memory?.items || []).filter(it => parts.has(it.model)).map(it => ({ ...it }));
+  let items = (saved?.items || []).filter(it => parts.has(it.model)).map(it => ({ ...it }));
   if (!items.length) items = [...parts.keys()].map(id => ({ model: id, turn: 0 }));   // bottom first
   const variantList = app.variants.list();
-  let variant = variantList.some(v => v.id === _memory?.variant) ? _memory.variant : (variantList[0]?.id ?? null);
+  // The variant is kept by its chip number (ids change when a project is reopened); 0 = current settings.
+  let variant = saved?.variantNum === 0 ? null
+    : (variantList.find(v => v.num === saved?.variantNum) || variantList[0])?.id ?? null;
   let selected = -1;
   const remember = () => {
-    _memory = { variant, items: items.map(it => ({ ...it })), datums: Object.fromEntries([...parts.values()].filter(p => p.edited).map(p => [p.id, { ...p.datums }])) };
+    app.stackLayout.set({
+      variantNum: variant == null ? 0 : (variantList.find(v => v.id === variant)?.num ?? 0),
+      items: items.map(it => ({ ...it })), datums: Object.fromEntries([...parts.values()].filter(p => p.edited).map(p => [p.id, { ...p.datums }])) });
   };
 
   // ── Scene ──

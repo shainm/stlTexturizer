@@ -6246,6 +6246,7 @@ async function _buildProjectZip(wantModel, wantTexture, extra = null) {
     zipFiles['variants.json'] = strToU8(JSON.stringify({ active: vs.active, layerIds: layers.map(L => L.id), items }));
     payload.variants = 'variants.json';
   }
+  if (includeModel && _stackLayout) payload.stack = _stackLayout;   // stack view (js/stackView.js)
   if (extra) Object.assign(payload, extra);
   zipFiles['settings.json'] = strToU8(JSON.stringify(payload, null, 2));
   return zipSync(zipFiles);
@@ -6438,7 +6439,10 @@ async function importProject(file, opts = {}) {
   }
   // After the finally: a full import clears the variants' paint with the undo stacks.
   await _restoreProjectVariants(unzipped, data, loadMode === 'all');
-  if (loadMode === 'all') _restoreProjectModels(unzipped, data);
+  if (loadMode === 'all') {
+    _restoreProjectModels(unzipped, data);
+    _stackLayout = data?.stack || null;
+  }
 }
 
 /** The variant tabs saved in a project (replacing the current ones); none saved leaves the current tabs. */
@@ -6886,6 +6890,7 @@ window.addEventListener('pointerup', _variants.refresh);
 const _models = { items: [], activeId: null, nextId: 1 };   // item: { id, name, stl, pose, refineLength, cyl, paint }
 let _modelSwapping = false;
 const _modelSwapHooks = [];   // async (id) after another model of the project was swapped in
+let _stackLayout = null;      // how the stack view was last stacked (saved with the project)
 const _modelBar = document.getElementById('model-bar');
 
 /** Make sure the loaded model has an entry (a lone model gets one only when a second arrives). */
@@ -6915,6 +6920,7 @@ function _modelLoaded(file) {
     _models.activeId = _models.items[_models.items.length - 1].id;
   } else {
     _models.items = [];
+    _stackLayout = null;   // a new project starts without a saved stack
     _models.activeId = null;
   }
   _renderModelBar();
@@ -7121,6 +7127,7 @@ initPersonal({
   },
   hasModel: () => !!currentGeometry,
   stackMaterial: _stackMaterial,   // stack view: (snap|null, geometry, frame, material?) → preview material
+  stackLayout: { get: () => _stackLayout, set: (v) => { _stackLayout = v; _scheduleSessionSave(); } },
   canExport: () => !!currentGeometry && _hasTexturedLayer() && !isExporting,
   textureNames: () => layers
     .map((L, i) => (L.visible ? _layerMapEntry(i) : null))
