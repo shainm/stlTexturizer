@@ -1082,16 +1082,18 @@ async function exportDialog(app) {
   const radio = (group, v, label, cur) => el('label', {}, el('input', { type: 'radio', name: group, value: v, checked: v === cur }), ' ' + label);
 
   const doModel = chk('do-model', '1'), doProj = chk('do-proj', '1'), doShared = chk('do-shared', '1'), doOrig = chk('do-orig', '1');
-  if (!state.originalPath) doOrig.checked = false; // nothing to copy until it's located
   const doImg = chk('do-img', '1'), doBake = chk('bake-colors', '1');
   const fmt = lsGet('format', '3mf');
   const fmtBox = el('span', { class: 'opts' }, radio('pds-fmt', '3mf', '3MF', fmt), radio('pds-fmt', 'stl', 'STL', fmt));
   const origMode = lsGet('orig-mode', 'copy');
   const origModes = el('span', { class: 'opts' }, radio('pds-orig', 'copy', 'Copy', origMode), radio('pds-orig', 'move', 'Move', origMode));
-  const origBox = el('span', { class: 'path', title: state.originalPath || '' }, state.originalPath || 'Location unknown — use Locate…');
+  // Not located: the loaded mesh itself is saved as an STL (unmodified, in the file's coordinates).
+  const NO_ORIG = 'Not located — the loaded mesh is saved as an STL (or use Locate… to copy the real file)';
+  const origBox = el('span', { class: 'path', title: state.originalPath || '' }, state.originalPath || NO_ORIG);
+  origModes.style.display = state.originalPath ? '' : 'none';
   const pickOrig = async () => {
     const { path } = await call('pick-file', { title: 'Locate the original model', types: MODEL_TYPES, initial: state.dest });
-    if (path) { state.originalPath = path; origBox.textContent = path; origBox.title = path; doOrig.checked = true; refresh(); }
+    if (path) { state.originalPath = path; origBox.textContent = path; origBox.title = path; origModes.style.display = ''; doOrig.checked = true; refresh(); }
   };
   const item = (box, label, ...rest) => el('div', { class: 'item' }, el('label', {}, box, ' ' + label), ...rest);
   const rows = {
@@ -1167,7 +1169,7 @@ async function exportDialog(app) {
       ...modelLines,
       doProj.checked && `${SUB.project}\\${projectFile(n)}`,
       doShared.checked && `${SUB.project}\\${SHARED_FILE}`,
-      doOrig.checked && state.originalPath && `${SUB.original}\\${basename(state.originalPath)}`,
+      doOrig.checked && (state.originalPath ? `${SUB.original}\\${basename(state.originalPath)}` : `${SUB.original}\\${safe(app.modelName() || 'model')}.stl`),
     ].filter(Boolean);
     // Show the paths as a collapsible folder tree, every file listed once under its folders.
     const wasOpen = new Set([...where.querySelectorAll('details[open]')].map(d => d.dataset.path));
@@ -1209,7 +1211,7 @@ async function exportDialog(app) {
       format: doModel.checked ? fmtNow() : null,
       project: doProj.checked,
       shared: doShared.checked,
-      originalMode: doOrig.checked ? origModes.querySelector('input:checked').value : 'none',
+      originalMode: doOrig.checked ? (state.originalPath ? origModes.querySelector('input:checked').value : 'mesh') : 'none',
       vary: null,
       variants: variantsNow(),
       image: doModel.checked && doImg.checked,
@@ -1220,7 +1222,6 @@ async function exportDialog(app) {
     if (doVary.checked && doModel.checked && !vv.length) problem = 'Enter at least one value for the setting to vary (e.g. 0, 4, 8).';
     else if (!state.dest) problem = 'Choose a folder to export into.';
     else if (!opts.format && !opts.project && !opts.shared && opts.originalMode === 'none') problem = 'Tick at least one thing to export.';
-    else if (opts.originalMode !== 'none' && !state.originalPath) problem = 'The original model\'s location is unknown — use Locate…, or untick "Original model".';
     if (problem) { await notice('Export', problem); continue; }
     const picked = modelsNow();
     const counts = [picked.length > 1 && picked.length, opts.variants.length, opts.vary && opts.vary.values.length].filter(Boolean);
@@ -1237,7 +1238,7 @@ async function exportDialog(app) {
     lsSet('do-img', doImg.checked ? '1' : '0'); lsSet('bake-colors', doBake.checked ? '1' : '0');
     app.setBakeColors(doBake.checked);
     lsSet('do-vary', doVary.checked ? '1' : '0'); lsSet('vary-key', varyKey.value); lsSet('vary-values-' + varyKey.value, varyText.value);
-    if (doOrig.checked) lsSet('orig-mode', opts.originalMode);
+    if (doOrig.checked && state.originalPath) lsSet('orig-mode', opts.originalMode);
     state.name = app.modelName();
     // Overall progress bar when more than one model file is written.
     app.batch.start(opts.format ? Math.max(1, picked.length) * Math.max(1, opts.variants.length) * Math.max(1, opts.vary ? opts.vary.values.length : 1) : 0);
@@ -1250,6 +1251,18 @@ async function exportDialog(app) {
     const variantList = opts.variants.length ? opts.variants : [null];
     let ok = true;
     try {
+      // Original not on disk (dropped in / opened from a project): save each model's unmodified mesh as STL.
+      if (opts.originalMode === 'mesh' && app.models) {
+        const ids = mlist.length > 1 ? mlist : [{ id: startId, name: mine }];
+        for (const m of ids) {
+          const bytes = app.models.stl(m.id);
+          if (!bytes) continue;
+          const target = join(state.dest, SUB.original, `${safe(m.name)}.stl`);
+          if ((await exists(target)).exists) continue;   // an original is never changed, so keep what is there
+          await writeFile(target, new Blob([bytes]));
+          sink.push(target);
+        }
+      }
       if (opts.format) {
         sets: for (const value of values) for (const v of variantList) for (const m of targets) {
           if (m && !(ok = await app.models.swapTo(m.id))) break sets;
