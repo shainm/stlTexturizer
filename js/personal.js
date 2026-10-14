@@ -739,7 +739,7 @@ function initAlignControl(app) {
       a.datums = { ...(a.datums || {}), [id]: d };
       if (id === app.models.activeId()) alignModular(app, a, d);
     };
-    try { openStackView(app, { parseSTL, stackDatums, align: state.align, setDatums }); }
+    try { openStackView(app, { parseSTL, stackDatums, align: state.align, setDatums, scaleV: app.scaleV, withScaleV: app.withScaleV, tileSizes: app.tileSizes, setScaleV: app.setScaleV }); }
     catch (err) { notice('Stack view', err.message); }
   });
   anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));

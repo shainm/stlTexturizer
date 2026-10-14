@@ -33,10 +33,25 @@ const STYLE = `
 .pds-stack-row { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; }
 .pds-stack-row.sel { border-color: var(--accent, #4af); background: color-mix(in srgb, var(--accent, #4af) 12%, transparent); }
 .pds-stack-row select { flex: 1; }
-.pds-stack-row .deg { width: 44px; text-align: right; color: var(--text-muted, #999); }
+.pds-stack-add { position: relative; height: 0; z-index: 1; }
+.pds-stack-add .hit { position: absolute; left: 0; right: -11px; top: -9px; height: 18px; display: flex; align-items: center; justify-content: flex-end; padding-right: 0; box-sizing: border-box; opacity: 0; transition: opacity .1s; }
+.pds-stack-add:hover .hit, .pds-stack-add .hit:focus-within { opacity: 1; }
+.pds-stack-add .line { position: absolute; left: 0; right: 9px; top: 50%; margin-top: -1px; border-top: 2px solid var(--surface2, #222); }
+.pds-stack-add button { position: relative; box-sizing: border-box; width: 18px; height: 18px; padding: 0; margin: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 14px; line-height: 0; border-radius: 0 50% 50% 50%; transform: rotate(-45deg); border: 0; background: var(--surface2, #222); color: var(--text, #fff); cursor: pointer; }
+.pds-stack-add button span { display: block; transform: rotate(45deg); line-height: 1; }
+.pds-stack-add .hit:hover .line { border-top-color: var(--accent, #4af); }
+.pds-stack-add .hit:hover button { background: var(--accent, #4af); }
+.pds-stack-row.empty { border: 1px dashed var(--accent, #4af); cursor: default; }
+.pds-stack-row .grip { cursor: grab; color: var(--text-muted, #999); letter-spacing: -2px; padding: 0 2px; user-select: none; }
+.pds-stack-row.drag { opacity: 0.4; }
+.pds-stack-row.over { border-color: var(--accent, #4af); }
+.pds-stack-row .deg { width: 44px; text-align: center; color: var(--text-muted, #999); }
 .pds-stack-row button, .pds-stack .x { font: inherit; background: none; border: 0; color: var(--text-muted, #999); cursor: pointer; padding: 0 3px; }
 .pds-stack-row button:hover, .pds-stack .x:hover { color: var(--text, #fff); }
 .pds-stack-row button:disabled { opacity: 0.3; cursor: default; }
+.pds-stack-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.pds-stack-actions .pds-btn { padding: 4px 10px; white-space: nowrap; }
+.pds-stack-actions input { width: 80px; }
 .pds-stack-datum { display: grid; grid-template-columns: 1fr auto auto; gap: 4px; align-items: center; }
 .pds-stack main { position: relative; min-width: 0; }
 .pds-stack canvas { display: block; width: 100%; height: 100%; }
@@ -228,7 +243,7 @@ export function openStackView(app, h) {
   }
   let testTex = null;   // the alignment test pattern, while it's switched on
   function buildMaterials() {
-    const snap = variant != null ? app.variants.snapOf(variant) : null;
+    const snap = snapNow();
     for (const p of parts.values()) p.mat = app.stackMaterial(snap, p.geo, frameFor(p), p.mat, testTex, p.id);
     // The exported meshes were made with the old joints / texture: drop them.
     for (const p of parts.values()) { p.exactGeo?.dispose(); p.exactGeo = null; }
@@ -242,7 +257,7 @@ export function openStackView(app, h) {
 
   // Build every stacked part's exported mesh (one at a time, as an export does).
   async function buildExact() {
-    const snap = variant != null ? app.variants.snapOf(variant) : null;
+    const snap = snapNow();
     const used = [...new Set(items.map(it => it.model))].map(id => parts.get(id));
     try {
       for (let k = 0; k < used.length; k++) {
@@ -362,7 +377,20 @@ export function openStackView(app, h) {
   // ── Sidebar ──
   const list = el('div');
   const datumsBox = el('div', { class: 'pds-stack-datum' });
-  const addSel = el('select', {}, ...[...parts.values()].map(p => el('option', { value: p.id }, p.name)));
+  let scaleVTry = null;   // a tile height (mm) being tried here on every layer; null = the settings' own
+  const tileText = el('p', { class: 'muted' });
+  const tileList = el('p', { class: 'muted', style: 'white-space:pre-line' });
+  const tileInput = el('input', { type: 'number', step: '0.1', min: '0.1', title: 'Texture tile height (Scale V, mm) used in this view' });
+  const tileSuggest = el('button', { class: 'pds-btn' }, 'Use suggestion');
+  const tileReset = el('button', { class: 'pds-btn', title: 'Back to the Scale V in the settings' }, 'Reset');
+  const tileApply = el('button', { class: 'pds-btn', title: 'Set Scale V in the settings to this value (the active layer)' }, 'Apply to settings');
+  const tileHint = el('div', {}, tileText, tileList, el('div', { class: 'pds-stack-actions' }, tileInput, tileSuggest, tileReset, tileApply));
+  const snapNow = () => {
+    const base = variant != null ? app.variants.snapOf(variant) : null;
+    return scaleVTry && h.withScaleV ? h.withScaleV(base, scaleVTry) : base;
+  };
+  let tileBest = null;
+  let addAt = null;   // an empty slot being filled: the items index the new part will take (null = none open)
   const varSel = el('select', { onchange: () => { variant = varSel.value === '' ? null : Number(varSel.value); buildMaterials(); layout(); remember(); } },
     el('option', { value: '' }, 'Current settings'),
     ...variantList.map(v => el('option', { value: v.id }, `${v.num} · ${v.label}`)));
@@ -372,20 +400,57 @@ export function openStackView(app, h) {
     'Thick lines are the tile edges, the arrows point up. Lined up, the lines run straight across every joint. ' +
     'A step in the level lines: up/down is off (joint heights). A step in the upright lines or tilted arrows: around is off (axis or steps).');
   const deg = (it) => steps ? `${+((it.turn * 360) / steps).toFixed(1)}°` : '';
+  // A line between two parts (or above / below the stack) with a + at its right: opens an empty slot there.
+  function addLine(at) {
+    if (addAt === at) {
+      const pick = el('select', { onclick: (e) => e.stopPropagation(), onchange: () => {
+        const model = Number(pick.value);
+        addAt = null;
+        items.splice(at, 0, { model, turn: 0 });
+        selected = -1;
+        layout(); renderList(); fit(); remember();
+      } }, el('option', { value: '' }, 'Choose a part…'), ...[...parts.values()].map(p => el('option', { value: p.id }, p.name)));
+      pick.value = '';
+      return el('div', { class: 'pds-stack-row empty' }, el('span', { class: 'grip' }, '+'), pick,
+        el('button', { title: 'Cancel', onclick: (e) => { e.stopPropagation(); addAt = null; renderList(); } }, '✕'));
+    }
+    return el('div', { class: 'pds-stack-add' }, el('div', { class: 'hit', title: 'Add a part here' }, el('span', { class: 'line' }),
+      el('button', { onclick: (e) => { e.stopPropagation(); addAt = at; renderList(); } }, el('span', {}, '+'))));
+  }
   function renderList() {
     list.textContent = '';
-    // Top of the stack first, as it stands.
+    // Top of the stack first, as it stands, with an add line above it, between parts and below it.
+    list.append(addLine(items.length));
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
       const sel = el('select', { onchange: () => { it.model = Number(sel.value); it.turn = 0; layout(); renderList(); remember(); }, onclick: (e) => e.stopPropagation() },
         ...[...parts.values()].map(p => el('option', { value: p.id }, p.name)));
       sel.value = String(it.model);
-      const move = (d) => (e) => { e.stopPropagation(); const j = i + d; [items[i], items[j]] = [items[j], items[i]]; if (selected === i) selected = j; layout(); renderList(); remember(); };
-      list.append(el('div', { class: 'pds-stack-row' + (i === selected ? ' sel' : ''), onclick: () => select(i === selected ? -1 : i) },
-        sel, el('span', { class: 'deg' }, deg(it)),
-        el('button', { title: 'Move up', disabled: i === items.length - 1, onclick: move(1) }, '▲'),
-        el('button', { title: 'Move down', disabled: i === 0, onclick: move(-1) }, '▼'),
-        el('button', { title: 'Remove from the stack', disabled: items.length < 2, onclick: (e) => { e.stopPropagation(); items.splice(i, 1); selected = -1; layout(); renderList(); remember(); } }, '✕')));
+      // Drag a row by its grip to reorder the stack; it drops into the place it is released over.
+      const grip = el('span', { class: 'grip', title: 'Drag to move this part up or down the stack' }, '⋮⋮');
+      const row = el('div', { class: 'pds-stack-row' + (i === selected ? ' sel' : ''), onclick: () => select(i === selected ? -1 : i) },
+        grip, sel,
+        steps ? el('button', { title: 'Turn one step left', onclick: (e) => { e.stopPropagation(); turnTo(it.turn - 1, i); } }, '◀') : null,
+        el('span', { class: 'deg' }, deg(it)),
+        steps ? el('button', { title: 'Turn one step right', onclick: (e) => { e.stopPropagation(); turnTo(it.turn + 1, i); } }, '▶') : null,
+        el('button', { title: 'Remove from the stack', disabled: items.length < 2, onclick: (e) => { e.stopPropagation(); items.splice(i, 1); selected = -1; layout(); renderList(); remember(); } }, '✕'));
+      grip.addEventListener('mousedown', () => { row.draggable = true; });
+      row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move'; row.classList.add('drag'); });
+      row.addEventListener('dragend', () => { row.draggable = false; row.classList.remove('drag'); });
+      row.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('over'); });
+      row.addEventListener('dragleave', () => row.classList.remove('over'));
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.classList.remove('over');
+        const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        if (!Number.isInteger(from) || from === i || !items[from]) return;
+        const selItem = selected >= 0 ? items[selected] : null;
+        items.splice(i, 0, items.splice(from, 1)[0]);
+        selected = selItem ? items.indexOf(selItem) : -1;
+        layout(); renderList(); remember();
+      });
+      list.append(row);
+      list.append(addLine(i));
     }
   }
   function renderDatums() {
@@ -398,8 +463,59 @@ export function openStackView(app, h) {
       };
       datumsBox.append(el('span', {}, p.name), num('seat'), num('pitch'));
     }
+    renderTileHint();
+  }
+  // The texture is fitted to each part's pitch in whole repeats (so joints always meet), which
+  // leaves a slightly different tile height per part. Show them, and the Scale V that evens them out.
+  function renderTileHint() {
+    const sv = scaleVTry || h.scaleV?.();
+    const pitches = [...parts.values()].map(p => p.datums.pitch).filter(v => v > 0);
+    tileHint.style.display = (!(sv > 0) || !pitches.length) ? 'none' : '';
+    if (tileHint.style.display) return;
+    // Whole repeats per pitch (what keeps the joints meeting); unevenness = tallest vs shortest, relative to their mean.
+    const tiles = (s) => pitches.map(pt => pt / Math.max(1, Math.round(pt / s)));
+    const spread = (s) => { const t = tiles(s); return (Math.max(...t) - Math.min(...t)) / (t.reduce((a, b) => a + b, 0) / t.length); };
+    // Search tile heights from a sixth of the tallest pitch up to the tallest pitch; take the most even, and of the
+    // equally even ones the tallest tile (the fewest repeats).
+    const hi = Math.max(...pitches), lo = hi / 6;
+    let best = null, bestSpread = Infinity;
+    for (let s = hi; s >= lo; s *= 0.995) { const sp = spread(s); if (sp < bestSpread - 0.005) { best = s; bestSpread = sp; } }
+    tileBest = best ? +best.toFixed(1) : null;
+    const fmt = (a) => a.map(v => v.toFixed(1)).join(' / ');
+    const now = spread(sv);
+    tileText.textContent = `Texture height per part at Scale V ${+sv.toFixed(2)} mm: ${fmt(tiles(sv))} mm (${Math.round(now * 100)}% uneven).`
+      + (tileBest && bestSpread < now - 0.02 ? ` Scale V ${tileBest} would give ${fmt(tiles(tileBest))} mm (${Math.round(spread(tileBest) * 100)}% uneven) — joints still meet. Parts of different height can't be made exactly equal.` : ' Already about as even as these part heights allow.');
+    // Each part's real tile, width × height (mm), and how much taller (+) / shorter (−) than wide it is
+    // against the Scale U : Scale V you set — 0% means the texture is not stretched either way.
+    const tileLines = (base) => [...parts.values()].map((p) => {
+      const r = h.tileSizes?.(base, frameFor(p));
+      return r ? `${p.name}: ${r.w.toFixed(1)} × ${r.h.toFixed(1)} mm, ${r.stretch >= 0 ? '+' : '−'}${Math.abs(Math.round(r.stretch * 100))}% height vs width` : null;
+    }).filter(Boolean);
+    const baseSnap = variant != null ? app.variants.snapOf(variant) : null;
+    const nowLines = tileLines(snapNow());
+    const bestLines = tileBest && h.withScaleV && tileBest !== scaleVTry ? tileLines(h.withScaleV(baseSnap, tileBest)) : [];
+    tileList.textContent = nowLines.length
+      ? 'Now:\n' + nowLines.join('\n') + (bestLines.length ? `\nWith Scale V ${tileBest}:\n` + bestLines.join('\n') : '')
+      : '';
+    tileInput.value = +sv.toFixed(2);
+    tileSuggest.disabled = !tileBest || Math.abs(tileBest - sv) < 0.05;
+    tileReset.disabled = !scaleVTry;
+    tileApply.disabled = !scaleVTry;
   }
   function select(i) { selected = i; renderList(); showRing(); }
+  const tryScaleV = (v) => {
+    scaleVTry = Number.isFinite(v) && v > 0 ? v : null;
+    buildMaterials(); renderTileHint();
+  };
+  tileInput.addEventListener('change', () => tryScaleV(parseFloat(tileInput.value)));
+  tileSuggest.addEventListener('click', () => { if (tileBest) tryScaleV(tileBest); });
+  tileReset.addEventListener('click', () => tryScaleV(null));
+  tileApply.addEventListener('click', () => {
+    if (!scaleVTry) return;
+    h.setScaleV?.(scaleVTry);
+    scaleVTry = null;
+    buildMaterials(); renderTileHint();
+  });
 
   const close = () => {
     closed = true;
@@ -421,7 +537,7 @@ export function openStackView(app, h) {
     // Arrow keys turn the selected part one step.
     if (steps && selected >= 0 && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.target.closest?.('input, select')) {
       e.preventDefault();
-      turnTo(items[selected].turn + (e.key === 'ArrowLeft' ? 1 : -1));
+      turnTo(items[selected].turn + (e.key === 'ArrowRight' ? 1 : -1));
     }
   };
   document.addEventListener('keydown', onKey, true);
@@ -463,25 +579,23 @@ export function openStackView(app, h) {
       el('label', { title: 'Yellow: each part\'s bottom joint. Cyan: where it says the next part sits. Drawn through the parts.' },
         el('input', { type: 'checkbox', onchange: (e) => { jointsOn = e.target.checked; showJoints(); } }), ' Show joint rings'),
       el('h4', {}, 'Stack (top first)'), list,
-      el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
-        el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),
       steps
         ? el('p', { class: 'muted' }, `Shift+drag a part: up/down moves it in the stack, sideways turns it in steps. Or click a part and drag its ring to turn it — it snaps in steps of ${+(360 / steps).toFixed(2)}° (1/${steps}). ←/→ turn it one step.`)
         : el('p', { class: 'muted' }, modular
           ? 'Turning is off: tick "Parts may sit turned in steps" in Line up parts to turn parts here.'
           : 'Parts are not lined up for modular stacking (Line up parts), so the textures may not meet at the joints and parts cannot be turned.'),
-      el('h4', {}, 'Joints per part: seat · next part at (mm above it)'), datumsBox,
+      el('h4', {}, 'Joints per part: seat · next part at (mm above it)'), datumsBox, tileHint,
       el('p', { class: 'muted' }, 'Set these to where the parts really touch: if a part sits down inside the one below (on a ledge, not the rim), the lower part\'s "next part at" is that ledge. The cyan ring must lie on it.'),
       el('p', { class: 'muted' }, 'Painted masks show per whole face: strokes finer than a face are blended onto its corners.')),
     el('main', {}, canvas));
   document.body.append(overlay);
 
   // ── Turning ──
-  function turnTo(turn) {
-    const it = items[selected];
+  function turnTo(turn, idx = selected) {
+    const it = items[idx];
     it.turn = ((turn % steps) + steps) % steps;
-    groups[selected].rotation.z = it.turn * stepRad;
-    if (ring.userData.pivot) ring.userData.pivot.rotation.z = it.turn * stepRad;
+    groups[idx].rotation.z = it.turn * stepRad;
+    if (idx === selected && ring.userData.pivot) ring.userData.pivot.rotation.z = it.turn * stepRad;
     renderList();
     remember();
   }

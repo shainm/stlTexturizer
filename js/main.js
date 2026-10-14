@@ -7299,6 +7299,30 @@ initPersonal({
   },
   showSponsorOverlay: _showSponsorOverlay,
   modelName: () => currentStlName,
+  scaleV: () => settings.scaleV,   // stack view: texture tile height (mm) it reports per part
+  // Stack view: a snapshot (null = the live settings) with every layer's Scale V set to `v`, for trying a tile height.
+  withScaleV: (snap, v) => {
+    const s = snap || _captureUndoSnapshot();
+    return { ...s, layers: s.layers.map(L => ({ ...L, settings: { ...L.settings, scaleV: v } })) };
+  },
+  // Stack view: the texture tile one part really gets — { w, h } mm (U/V after the whole-repeat fitting) and
+  // `stretch`, how much taller (+) or shorter (−) than wide it is against the Scale U : Scale V you set. null = no texture.
+  tileSizes: (snap, frame) => {
+    const s = snap || _captureUndoSnapshot();
+    const L = s.layers.find(l => l.visible && l.mapEntry);
+    if (!L) return null;
+    const st = { ...L.settings, cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null };
+    const min = new THREE.Vector3(frame.min.x, frame.min.y, frame.min.z);
+    const size = new THREE.Vector3(frame.size.x, frame.size.y, frame.size.z);
+    const b = { min, size, max: min.clone().add(size), center: min.clone().addScaledVector(size, 0.5) };
+    if (frame.modular) b.modular = { ...frame.modular };
+    const { refU, refV } = getScaleReferenceLengths(st.mappingMode, st, b);
+    const rel = scaleMmToRelative(st.mappingMode, st, b);
+    const w = rel.u * refU, hh = rel.v * refV;
+    return { w, h: hh, stretch: (hh / w) / (st.scaleV / st.scaleU) - 1 };
+  },
+  // Stack view: keep a tried tile height — the active layer's Scale V.
+  setScaleV: (v) => { scaleVVal.value = v; scaleVVal.dispatchEvent(new Event('change', { bubbles: true })); },
   variants: _variants,   // saved variants (js/variants.js): list(), runEach()
   models: {              // the project's models (see "Models of the project")
     list: () => { _ensureActiveModel(); return _models.items.map(m => ({ id: m.id, name: m.name })); },
