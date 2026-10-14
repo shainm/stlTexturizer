@@ -6824,14 +6824,24 @@ function _renderOverrideMarks() {
     if (!rows.has(row)) rows.set(row, []);
     rows.get(row).push(k);
   }
-  for (const [row, keys] of rows) {
+  const mark = (host, keys, title) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'variant-reset';
     btn.textContent = '↺';
-    btn.title = 'Changed from the default variant (1) — click to use its value';
+    btn.title = title;
     btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _resetToDefault(keys); });
-    (row.querySelector('label, .form-row-label') || row).append(btn);
+    host.append(btn);
+  };
+  const sections = new Map();   // sidebar section → every differing key in it
+  for (const [row, keys] of rows) {
+    mark(row.querySelector('label, .form-row-label') || row, keys, 'Changed from the default variant (1) — click to use its value');
+    const sec = row.closest('.panel-section');
+    if (sec) sections.set(sec, [...(sections.get(sec) || []), ...keys]);
+  }
+  for (const [sec, keys] of sections) {
+    const h = sec.querySelector(':scope > h2');
+    if (h) mark(h, keys, 'Settings in this section differ from the default variant (1) — click to use all of its values');
   }
 }
 
