@@ -111,6 +111,11 @@ export function buildProfile(geometry, center) {
   const fillPos = start.slice(0, nv);
   const adj = new Int32Array(start[nv]);
   const cost = new Float32Array(start[nv]);
+  // Edges of faces looking towards the axis (inner walls of a hollow part).
+  // V is measured on the outside first without them: otherwise the shortest
+  // way to the top of a tall outer wall can run up the inside, over the rim
+  // and back down, and V would grow downwards there (the texture upside down).
+  const inward = new Uint8Array(start[nv]);
   for (let t = 0; t < triCount; t++) {
     const a = ids[t * 3], b = ids[t * 3 + 1], c = ids[t * 3 + 2];
     // Cost = height travelled, plus radius travelled only on near-flat faces.
@@ -122,18 +127,21 @@ export function buildProfile(geometry, center) {
     // fade between the two keeps V continuous where a wall flows into a cap.
     const e1x = xArr[b] - xArr[a], e1y = yArr[b] - yArr[a], e1z = zArr[b] - zArr[a];
     const e2x = xArr[c] - xArr[a], e2y = yArr[c] - yArr[a], e2z = zArr[c] - zArr[a];
-    const nzv = (e1x * e2y - e1y * e2x) /
-      (Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x) || 1);
+    const nl = Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x) || 1;
+    const nzv = (e1x * e2y - e1y * e2x) / nl;
+    const cx = xArr[a] + xArr[b] + xArr[c], cy = yArr[a] + yArr[b] + yArr[c], cr = Math.hypot(cx, cy);
+    const radial = cr > 1e-9 ? ((e1y * e2z - e1z * e2y) * cx + (e1z * e2x - e1x * e2z) * cy) / (nl * cr) : 0;
+    const inw = radial < -0.3 ? 1 : 0;
     const hRaw = Math.min(1, Math.max(0, (Math.abs(nzv) - FLAT_LO) / (FLAT_HI - FLAT_LO)));
     const h = hRaw * hRaw * (3 - 2 * hRaw);
     const w = (p, q) => Math.abs(zArr[q] - zArr[p]) + h * Math.abs(rhoArr[q] - rhoArr[p]);
     let k;
-    k = fillPos[a]++; adj[k] = b; cost[k] = w(a, b);
-    k = fillPos[a]++; adj[k] = c; cost[k] = w(a, c);
-    k = fillPos[b]++; adj[k] = a; cost[k] = w(b, a);
-    k = fillPos[b]++; adj[k] = c; cost[k] = w(b, c);
-    k = fillPos[c]++; adj[k] = a; cost[k] = w(c, a);
-    k = fillPos[c]++; adj[k] = b; cost[k] = w(c, b);
+    k = fillPos[a]++; adj[k] = b; cost[k] = w(a, b); inward[k] = inw;
+    k = fillPos[a]++; adj[k] = c; cost[k] = w(a, c); inward[k] = inw;
+    k = fillPos[b]++; adj[k] = a; cost[k] = w(b, a); inward[k] = inw;
+    k = fillPos[b]++; adj[k] = c; cost[k] = w(b, c); inward[k] = inw;
+    k = fillPos[c]++; adj[k] = a; cost[k] = w(c, a); inward[k] = inw;
+    k = fillPos[c]++; adj[k] = b; cost[k] = w(c, b); inward[k] = inw;
   }
 
   let rhoMax = 1e-6, zMin = Infinity, zMax = -Infinity;
@@ -174,7 +182,7 @@ export function buildProfile(geometry, center) {
 
   // Multi-source Dijkstra; edge cost is the length in the (rho, z) plane.
   const dist = new Float32Array(nv).fill(Infinity);
-  const heapV = new Int32Array(start[nv] + seeds.length + 1);
+  const heapV = new Int32Array(start[nv] + nv + 1);
   const heapD = new Float32Array(heapV.length);
   let hn = 0;
   const push = (v, d) => {
@@ -201,16 +209,22 @@ export function buildProfile(geometry, center) {
     heapD[i] = d; heapV[i] = lv;
     return v;
   };
-  for (const s of seeds) { dist[s] = 0; push(s, 0); }
-  while (hn) {
-    const v = pop();
-    const dv = dist[v];
-    for (let e = start[v]; e < start[v + 1]; e++) {
-      const w = adj[e];
-      const nd = dv + cost[e];
-      if (nd < dist[w]) { dist[w] = nd; if (hn < heapV.length) push(w, nd); }
+  const run = (outsideOnly) => {
+    while (hn) {
+      const v = pop();
+      const dv = dist[v];
+      for (let e = start[v]; e < start[v + 1]; e++) {
+        if (outsideOnly && inward[e]) continue;
+        const w = adj[e];
+        const nd = dv + cost[e];
+        if (nd < dist[w]) { dist[w] = nd; if (hn < heapV.length) push(w, nd); }
+      }
     }
-  }
+  };
+  for (const s of seeds) { dist[s] = 0; push(s, 0); }
+  run(true);    // the outside (an edge counts when one of its faces does not look at the axis)
+  for (let v = 0; v < nv; v++) if (dist[v] < Infinity) push(v, dist[v]);
+  run(false);   // then the inner walls, on from there
 
   // Bake into a (rho, z) grid by drawing every triangle edge with V interpolated
   // along it (vertices alone leave big flat faces empty).
