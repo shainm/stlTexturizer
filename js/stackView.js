@@ -8,7 +8,8 @@
  * steps set in "Line up parts" ("Parts may sit turned in steps of 1/N"): pick
  * a part, then drag its ring — it clicks from step to step like a slicer's
  * rotate tool. Parts can be added any number of times (e.g. several middles),
- * and dragged up or down the stack to reorder it (they snap back onto the joints).
+ * and Shift-dragged up or down the stack to reorder it (they snap back onto
+ * the joints) or sideways to turn them step by step. A plain drag always orbits.
  * The textures follow each part's export frame, so what joins here joins in print.
  */
 
@@ -371,7 +372,7 @@ export function openStackView(app, h) {
       el('div', { class: 'pds-stack-row', style: 'cursor:default' }, addSel,
         el('button', { class: 'pds-btn', onclick: () => { items.push({ model: Number(addSel.value), turn: 0 }); layout(); renderList(); fit(); remember(); } }, 'Add on top')),
       steps
-        ? el('p', { class: 'muted' }, `Drag a part up or down to move it in the stack. Click a part, then drag its ring to turn it — it snaps in steps of ${+(360 / steps).toFixed(2)}° (1/${steps}). ←/→ turn it one step.`)
+        ? el('p', { class: 'muted' }, `Shift+drag a part: up/down moves it in the stack, sideways turns it in steps. Or click a part and drag its ring to turn it — it snaps in steps of ${+(360 / steps).toFixed(2)}° (1/${steps}). ←/→ turn it one step.`)
         : el('p', { class: 'muted' }, modular
           ? 'Turning is off: tick "Parts may sit turned in steps" in Line up parts to turn parts here.'
           : 'Parts are not lined up for modular stacking (Line up parts), so the textures may not meet at the joints and parts cannot be turned.'),
@@ -396,8 +397,8 @@ export function openStackView(app, h) {
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
   };
-  const angleAt = () => {
-    const pl = new THREE.Plane(new THREE.Vector3(0, 0, 1), -ring.position.z), pt = new THREE.Vector3();
+  const angleAt = (z = ring.position.z) => {
+    const pl = new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), pt = new THREE.Vector3();
     return ray.ray.intersectPlane(pl, pt) ? Math.atan2(pt.y, pt.x) : null;
   };
   // Moving a part along the stack: it follows the pointer up and down (on a
@@ -428,6 +429,7 @@ export function openStackView(app, h) {
   }
 
   let drag = null, down = null;
+  let pending = null;   // Shift-pressed on a part, direction not yet known: { i, x, y, z (grab height), grabZ }
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     setRay(e);
@@ -442,11 +444,12 @@ export function openStackView(app, h) {
       e.stopImmediatePropagation();   // the orbit controls never see it
       return;
     }
-    const hit = ray.intersectObjects(stack.children, true)[0];
+    // Shift on a part: snap it (turn or move, by the first direction dragged). Without Shift: orbit.
+    const hit = e.shiftKey && ray.intersectObjects(stack.children, true)[0];
     if (hit) {
       const z = heightAt(), i = hit.object.userData.item;
       if (z == null) return;
-      move = { item: items[i], grabZ: z - bases[i], x: e.clientX, y: e.clientY, moving: false, sel: items[selected] };
+      pending = { i, x: e.clientX, y: e.clientY, z: hit.point.z, grabZ: z - bases[i] };
       controls.enabled = false;
       canvas.setPointerCapture(e.pointerId);
       e.preventDefault();
@@ -457,8 +460,19 @@ export function openStackView(app, h) {
   }, true);   // capture: runs before the orbit controls' own handler
   canvas.addEventListener('pointermove', (e) => {
     setRay(e);
+    if (pending) {
+      const dx = e.clientX - pending.x, dy = e.clientY - pending.y;
+      if (Math.hypot(dx, dy) < 6) return;
+      const p = pending;
+      pending = null;
+      if (steps && Math.abs(dx) > Math.abs(dy)) {   // sideways: turn it, around the height it was grabbed at
+        select(p.i);
+        const a = angleAt(p.z);
+        if (a != null) drag = { start: a, turn: items[p.i].turn, z: p.z }; else controls.enabled = true;
+        if (ringMesh) ringMesh.material = ringHot;
+      } else move = { item: items[p.i], grabZ: p.grabZ, moving: false, sel: items[selected] };
+    }
     if (move) {
-      if (!move.moving && Math.hypot(e.clientX - move.x, e.clientY - move.y) < 4) return;
       move.moving = true;
       canvas.style.cursor = 'ns-resize';
       ring.visible = false;
@@ -467,7 +481,7 @@ export function openStackView(app, h) {
       return;
     }
     if (drag) {
-      const a = angleAt();
+      const a = angleAt(drag.z);
       if (a == null) return;
       let d = a - drag.start;
       d = Math.atan2(Math.sin(d), Math.cos(d));   // shortest way round
@@ -478,9 +492,16 @@ export function openStackView(app, h) {
       return;
     }
     if (!down) canvas.style.cursor = ringMesh && ray.intersectObject(ringMesh, false).length ? 'grab'
-      : ray.intersectObjects(stack.children, true).length ? 'move' : '';
+      : e.shiftKey && ray.intersectObjects(stack.children, true).length ? 'move' : '';
   });
   canvas.addEventListener('pointerup', (e) => {
+    if (pending) {   // Shift-click without dragging: just pick it
+      const i = pending.i;
+      pending = null;
+      controls.enabled = true;
+      select(i === selected ? -1 : i);
+      return;
+    }
     if (move) {
       const { item, moving, sel } = move;
       move = null;
