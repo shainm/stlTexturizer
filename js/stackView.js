@@ -113,10 +113,10 @@ export function openStackView(app, h) {
     const axis = { x: xy.min.x + xy.size.x / 2, y: xy.min.y + xy.size.y / 2 };
     const detected = h.stackDatums(pos, axis);
     const remembered = _memory?.datums?.[m.id];
-    const datums = remembered || (modular && m.id === activeId ? { seat: align.seat, pitch: align.pitch } : detected);
+    const datums = remembered || (modular && (align.datums?.[m.id] || (m.id === activeId ? { seat: align.seat, pitch: align.pitch } : null))) || detected;
     let rMax = 0;
     for (let i = 0; i < pos.length; i += 3) rMax = Math.max(rMax, Math.hypot(pos[i] - axis.x, pos[i + 1] - axis.y));
-    parts.set(m.id, { id: m.id, name: m.name, pos, own, xy, axis, rMax, datums: { ...datums }, geo: partGeometry(pos), mat: null });
+    parts.set(m.id, { id: m.id, name: m.name, pos, own, xy, axis, rMax, datums: { ...datums }, edited: !!remembered, geo: partGeometry(pos), mat: null });
   }
   if (!parts.size) return;
 
@@ -126,7 +126,7 @@ export function openStackView(app, h) {
   let variant = variantList.some(v => v.id === _memory?.variant) ? _memory.variant : (variantList[0]?.id ?? null);
   let selected = -1;
   const remember = () => {
-    _memory = { variant, items: items.map(it => ({ ...it })), datums: Object.fromEntries([...parts.values()].map(p => [p.id, { ...p.datums }])) };
+    _memory = { variant, items: items.map(it => ({ ...it })), datums: Object.fromEntries([...parts.values()].filter(p => p.edited).map(p => [p.id, { ...p.datums }])) };
   };
 
   // ── Scene ──
@@ -254,7 +254,7 @@ export function openStackView(app, h) {
     for (const p of parts.values()) {
       const num = (k) => {
         const inp = el('input', { type: 'number', step: '0.01', value: p.datums[k].toFixed(2), title: k === 'seat' ? 'Bottom joint edge (mm, file Z)' : 'Where the next part sits, above the seat (mm)' });
-        inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) { p.datums[k] = k === 'pitch' ? Math.max(0, v) : v; buildMaterials(); layout(); remember(); } });
+        inp.addEventListener('change', () => { const v = parseFloat(inp.value); if (Number.isFinite(v)) { p.edited = true; p.datums[k] = k === 'pitch' ? Math.max(0, v) : v; buildMaterials(); layout(); remember(); } });
         return inp;
       };
       datumsBox.append(el('span', {}, p.name), num('seat'), num('pitch'));

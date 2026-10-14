@@ -659,7 +659,11 @@ function alignModular(app, cfg, opts = {}) {
     size: { x: xy.size.x, y: xy.size.y, z: Math.max(pitch, 1) },
     modular: { pitch, positions: cfg.rotate ? positions : 1 },
   };
-  state.align = { mode: 'modular', frame, seat, pitch, xy, rotate: !!cfg.rotate, positions };
+  // Joint edges typed or picked for a part are kept per project model, so
+  // switching parts (and exporting them all) lines each one up with its own.
+  const datums = { ...(cfg.datums || {}) };
+  if (opts.seat != null || opts.pitch != null) datums[app.models.activeId()] = { seat, pitch };
+  state.align = { mode: 'modular', frame, seat, pitch, xy, rotate: !!cfg.rotate, positions, datums };
   app.setTextureFrame(frame);
   updateAlignStatus();
   return true;
@@ -732,6 +736,14 @@ function initAlignControl(app) {
     catch (err) { notice('Stack view', err.message); }
   });
   anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));
+  // Another part of the project swapped in: line it up the same way (its own joint edges, the shared axis and steps).
+  app.models.onSwapped(async (id) => {
+    const a = state.align;
+    hideJointRings();
+    if (!a) return;
+    if (a.mode === 'modular') alignModular(app, a, a.datums?.[id] || {});
+    else if (a.assembly) await alignTo(app, a.assembly, { quiet: true });
+  });
   updateAlignStatus();
 }
 
@@ -807,7 +819,7 @@ async function alignDialog(app) {
   const mode = body.querySelector('input[name="pds-align-mode"]:checked').value;
   if (mode === 'modular') {
     const seat = parseFloat(seatIn.value), pitch = parseFloat(pitchIn.value);
-    alignModular(app, { xy, rotate: rotate.checked, positions: Math.max(1, parseInt(posIn.value, 10) || 1) },
+    alignModular(app, { xy, datums: a?.datums, rotate: rotate.checked, positions: Math.max(1, parseInt(posIn.value, 10) || 1) },
       { seat: Number.isFinite(seat) ? seat : undefined, pitch: Number.isFinite(pitch) ? pitch : undefined });
     return;
   }

@@ -6885,6 +6885,7 @@ window.addEventListener('pointerup', _variants.refresh);
 // and cylinder axis). Swapping reloads the model from the STL kept in memory.
 const _models = { items: [], activeId: null, nextId: 1 };   // item: { id, name, stl, pose, refineLength, cyl, paint }
 let _modelSwapping = false;
+const _modelSwapHooks = [];   // async (id) after another model of the project was swapped in
 const _modelBar = document.getElementById('model-bar');
 
 /** Make sure the loaded model has an entry (a lone model gets one only when a second arrives). */
@@ -6957,6 +6958,8 @@ async function _swapModel(id) {
     refreshExclusionOverlay();
     updatePreview();
     _models.activeId = id;
+    // Loading dropped the texture frame; personal.js lines this part up again (Line up parts).
+    for (const fn of _modelSwapHooks) await fn(id);
     _clearUndoStacks();   // the baseline must include the restored paint
     _scheduleSessionSave();
     return true;
@@ -7103,6 +7106,7 @@ initPersonal({
     list: () => { _ensureActiveModel(); return _models.items.map(m => ({ id: m.id, name: m.name })); },
     activeId: () => { _ensureActiveModel(); return _models.activeId; },
     // A model's mesh as binary STL bytes in its file coordinates (the loaded one straight from the view).
+    onSwapped: (fn) => { _modelSwapHooks.push(fn); },
     stl: (id) => {
       _ensureActiveModel();
       if (id === _models.activeId) return currentGeometry ? _geometryToBinarySTL(currentGeometry, true) : null;
