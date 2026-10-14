@@ -287,23 +287,28 @@ export function buildProfile(geometry, center) {
 export function fitProfileToJoints(prof, seatZ, topZ, tile, seatV) {
   if (!prof || !(tile > 0)) return prof;
   const { nr, nz, cell, zMin, data } = prof;
+  // V on the OUTERMOST surface at height z: the joint you see is the outer
+  // edge, where the texture carries on to the next part. (Nearer the axis at
+  // that height lie a flat bottom or rim top, whose width V also counts, and
+  // the inner wall.)
   const ringV = (z) => {
     const iy0 = Math.min(nz - 1, Math.max(0, Math.round((z - zMin) / cell - 0.5)));
     for (let d = 0; d <= 3; d++) {
-      const vals = [];
+      let best = -1, v = 0;
       for (const iy of d ? [iy0 - d, iy0 + d] : [iy0]) {
         if (iy < 0 || iy >= nz) continue;
-        for (let ix = 0; ix < nr; ix++) { const k = (iy * nr + ix) * 4; if (data[k + 1] > 0.5) vals.push(data[k]); }
+        for (let ix = nr - 1; ix > best; ix--) {
+          const k = (iy * nr + ix) * 4;
+          if (data[k + 1] > 0.5) { best = ix; v = data[k]; break; }
+        }
       }
-      if (vals.length) return vals;
+      if (best >= 0) return v;
     }
     return null;
   };
-  const lo = ringV(seatZ), hi = ringV(topZ);
-  if (!lo || !hi) return prof;
-  const vSeat = Math.min(...lo);
-  hi.sort((a, b) => a - b);
-  const L = hi[hi.length >> 1] - vSeat;
+  const vSeat = ringV(seatZ), vTop = ringV(topZ);
+  if (vSeat == null || vTop == null) return prof;
+  const L = vTop - vSeat;
   if (!(L > tile * 0.25)) return prof;
   const k = Math.max(1, Math.round(L / tile)) * tile / L;
   const out = new Float32Array(data);
