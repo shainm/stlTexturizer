@@ -26,7 +26,7 @@ import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMate
 import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { printZScale } from './displacement.js';
-import { buildProfile } from './profileV.js';
+import { buildProfile, fitProfileToJoints } from './profileV.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
 import { exportSTL, export3MF } from './exporter.js';
 import { buildAdjacency, bucketFill,
@@ -36,7 +36,7 @@ import { PaintTree } from './paintTree.js';
 import { runFastDiagnostics, runExpensiveDiagnostics,
          getEdgePositions } from './meshValidation.js';
 import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS } from './i18n.js';
-import { getScaleReferenceLengths } from './mapping.js';
+import { getScaleReferenceLengths, scaleMmToRelative } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { setDownloadSink, getDownloadSink } from './exporter.js';
@@ -64,6 +64,7 @@ function _mapBounds() { return _mapFrame || currentBounds; }
 // cached per mesh and projection centre, and rides on the bounds object so the
 // preview shader, the workers and computeUV all see it.
 const _profileCache = new WeakMap();
+const _fitCache = new WeakMap();   // base profile → joint-fitted variants
 function _attachProfile(b) {
   if (!b) return b;
   const used = layers.some((L, i) => (i === activeLayer ? settings : L.settings).mappingMode === 7);
@@ -73,6 +74,21 @@ function _attachProfile(b) {
   const key = `${b.center.x},${b.center.y},${b.center.z}`;
   if (!byCenter.has(key)) byCenter.set(key, buildProfile(currentGeometry, b.center));
   b.profile = byCenter.get(key);
+  // Modular stacking (personal.js "Line up parts"): refit V so the seat and top
+  // joint rings both fall on the texture's tile seam, like the cylinder's height fit.
+  const mod = b.modular, base = b.profile;
+  const flat = layers.map((L, i) => (i === activeLayer ? settings : L.settings)).find(s => s.mappingMode === 7);
+  if (mod && base && flat && mod.pitch > 0 && Math.abs(Math.cos((Number(flat.rotation) || 0) * Math.PI / 180)) > 0.999) {
+    const { refV } = getScaleReferenceLengths(7, flat, b);
+    const tile = refV * scaleMmToRelative(7, flat, b).v / (flat.textureAspectV ?? 1);
+    const seatV = -0.5 * (refV - b.size.z);   // V where the texture row is 0 (see mapping.js)
+    const seatZ = b.min.z - b.center.z;
+    const fk = `${seatZ}|${mod.pitch}|${tile}|${seatV}`;
+    let fits = _fitCache.get(base);
+    if (!fits) _fitCache.set(base, fits = new Map());
+    if (!fits.has(fk)) fits.set(fk, fitProfileToJoints(base, seatZ, seatZ + mod.pitch, tile, seatV));
+    b.profile = fits.get(fk);
+  }
   return b;
 }
 // Forward rigid transform from the file's original coordinates to the in-app

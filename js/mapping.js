@@ -63,7 +63,7 @@ export function getScaleReferenceLengths(mode, settings, bounds) {
  * seat): { pitch, positions }. The tile height is nudged so a whole number of
  * repeats fits the pitch (seat → where the next part rests), so every joint of
  * a stack meets the texture at the same phase whatever the parts' order; with
- * positions > 1 (cylindrical only) the repeats around are a multiple of it, so
+ * positions > 1 (cylindrical and spherical modes, where U runs around Z) the repeats around are a multiple of it, so
  * a part rotated by one position still lines up. Applies when the texture is
  * not turned sideways (V runs along z).
  */
@@ -77,7 +77,7 @@ export function scaleMmToRelative(mode, settings, bounds) {
     if (mod.pitch > 0 && Math.abs(Math.cos(rot)) > 0.999) {
       sv = mod.pitch / Math.max(1, Math.round(mod.pitch / sv));
     }
-    if (mod.positions > 1 && mode === MODE_CYLINDRICAL) {
+    if (mod.positions > 1 && (mode === MODE_CYLINDRICAL || mode === MODE_SPHERICAL || mode === MODE_SPHERICAL_FLAT)) {
       su = refU / (mod.positions * Math.max(1, Math.round(refU / (su * mod.positions))));
     }
   }

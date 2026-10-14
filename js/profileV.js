@@ -275,6 +275,42 @@ export function buildProfile(geometry, center) {
   return { nr, nz, cell, zMin, data };
 }
 
+/**
+ * Refit a profile grid so two joint rings sit exactly on the texture's tile
+ * seam: V at the seat ring becomes `seatV` and V at the top ring a whole number
+ * of `tile` mm above it (the profile between them is stretched slightly, by at
+ * most half a tile over the ring-to-ring length). Rings are given as heights
+ * relative to the projection centre, like the grid's zMin. Returns the grid
+ * unchanged when the rings can't be found. The preview shader and computeUV
+ * both read this grid, so they stay in step.
+ */
+export function fitProfileToJoints(prof, seatZ, topZ, tile, seatV) {
+  if (!prof || !(tile > 0)) return prof;
+  const { nr, nz, cell, zMin, data } = prof;
+  const ringV = (z) => {
+    const iy0 = Math.min(nz - 1, Math.max(0, Math.round((z - zMin) / cell - 0.5)));
+    for (let d = 0; d <= 3; d++) {
+      const vals = [];
+      for (const iy of d ? [iy0 - d, iy0 + d] : [iy0]) {
+        if (iy < 0 || iy >= nz) continue;
+        for (let ix = 0; ix < nr; ix++) { const k = (iy * nr + ix) * 4; if (data[k + 1] > 0.5) vals.push(data[k]); }
+      }
+      if (vals.length) return vals;
+    }
+    return null;
+  };
+  const lo = ringV(seatZ), hi = ringV(topZ);
+  if (!lo || !hi) return prof;
+  const vSeat = Math.min(...lo);
+  hi.sort((a, b) => a - b);
+  const L = hi[hi.length >> 1] - vSeat;
+  if (!(L > tile * 0.25)) return prof;
+  const k = Math.max(1, Math.round(L / tile)) * tile / L;
+  const out = new Float32Array(data);
+  for (let i = 0; i < out.length; i += 4) out[i] = seatV + (data[i] - vSeat) * k;
+  return { ...prof, data: out };
+}
+
 /** Weighted bilinear lookup; mirrors the GLSL `profileV`. rho and z (relative to the centre) in mm. */
 export function sampleProfile(p, rho, z) {
   const { nr, nz, cell, zMin, data } = p;

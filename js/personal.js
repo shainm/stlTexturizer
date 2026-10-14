@@ -742,9 +742,12 @@ async function alignDialog(app) {
   const pitchIn = num(a?.mode === 'modular' ? a.pitch : d.pitch);
   const rotate = el('input', { type: 'checkbox', checked: a?.mode === 'modular' ? a.rotate : false });
   const posIn = el('input', { type: 'text', value: String(a?.positions || tabs || 3), style: 'max-width:40px;flex:none' });
+  const stepDeg = el('span', { class: 'muted' });
+  const showStep = () => { const n = parseInt(posIn.value, 10); stepDeg.textContent = n > 0 ? `= ${+(360 / n).toFixed(2)}°` : ''; };
+  posIn.addEventListener('input', showStep); showStep();
   const modeVal = a?.mode === 'assembly' ? 'assembly' : 'modular';
   const radio = (v, label) => el('label', {}, el('input', { type: 'radio', name: 'pds-align-mode', value: v, checked: v === modeVal }), ' ' + label);
-  const cyl = document.getElementById('mapping-mode')?.value === '3';
+  const cyl = ['3', '4', '7'].includes(document.getElementById('mapping-mode')?.value); // U runs around Z
   const body = el('div', {},
     el('div', { class: 'row opts' }, radio('modular', 'Modular — any combination of parts'), radio('assembly', 'One assembly file')),
     el('hr'),
@@ -754,9 +757,10 @@ async function alignDialog(app) {
     el('div', { class: 'row' }, el('label', {}, 'Top joint edge'), pitchIn, el('span', {}, 'mm above it'),
       el('button', { class: 'pds-btn', onclick: (e) => pickInto(e, 'top') }, 'Pick edge…')),
     el('p', { class: 'muted' }, 'The joint edges are the level edges where this part meets the parts below and above (shown in yellow). Pick them on the model if the detected ones are wrong.'),
-    el('p', { class: 'muted' }, `Detected: next part at ${d.pitch.toFixed(2)} mm${tabs ? `, ${tabs} tabs` : ''}. On the top piece this is where a cap would sit.`),
-    el('div', { class: 'row' }, el('label', {}, rotate, ' Parts may sit rotated by one tab position —'), posIn, el('span', {}, 'positions')),
-    !cyl ? el('p', { class: 'muted' }, 'Rotation only works with Cylindrical projection (Mode).') : null,
+    el('p', { class: 'muted' }, `Detected: next part at ${d.pitch.toFixed(2)} mm${tabs ? `, ${tabs} tabs (a turn step may be 1/${tabs})` : ''}. On the top piece this is where a cap would sit.`),
+    el('div', { class: 'row' }, el('label', {}, rotate, ' Parts may sit turned in steps of 1/'), posIn, el('span', {}, 'of a turn'), stepDeg),
+    el('p', { class: 'muted' }, 'The texture is fitted so turning a part by any whole step (and so any multiple of it) leaves the pattern looking identical. Steps of 60° → enter 6.'),
+    !cyl ? el('p', { class: 'muted' }, 'Rotation only works with Cylindrical, Spherical and Spherical (adaptive) projection (Mode).') : null,
     el('p', { class: 'muted' }, 'All parts must be exported around the same axis (same XY coordinates), as CAD exports of one assembly are.'),
     el('hr'),
     el('p', { class: 'muted' }, 'One assembly file: lines the texture up exactly as the parts sit in an assembly STL (an exploded one is stacked first).'),
