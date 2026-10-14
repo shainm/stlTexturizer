@@ -744,8 +744,20 @@ function initAlignControl(app) {
   });
   anchor.after(el('div', { class: 'pds-align' }, btn, stackBtn, _alignStatus));
   // The line-up rides along in the resumable session too (a page reload keeps it).
-  app.setSessionExtra(() => ({ pds: { align: state.align ? { ...state.align } : null } }));
-  app.onSessionRestored(async (data) => { if (data?.pds?.align) await restoreAlign(app, data.pds, true); });
+  // So do where the job lives and what it is called: without them a resumed
+  // session exports (and archives) into whichever job folder was used last.
+  app.setSessionExtra(() => ({ pds: {
+    align: state.align ? { ...state.align } : null,
+    dest: state.dest || null, name: state.name || null, originalPath: state.originalPath || null,
+  } }));
+  app.onSessionRestored(async (data) => {
+    const p = data?.pds;
+    if (!p) return;
+    if (p.dest) state.dest = p.dest;
+    if (p.name) state.name = p.name;
+    if (p.originalPath) state.originalPath = p.originalPath;
+    if (p.align) await restoreAlign(app, p, true);
+  });
   // Another part of the project swapped in: line it up the same way (its own joint edges, the shared axis and steps).
   app.models.onSwapped(async (id) => {
     const a = state.align;
@@ -1326,6 +1338,7 @@ async function archivePreviousExports() {
   const rel = (p) => p.slice(state.dest.length + 1);
   const when = Math.max(...files.map(f => f.mtime)) * 1000;
   const ok = await modal(title, el('div', {},
+    el('p', { class: 'muted', style: 'word-break:break-all' }, `Job folder: ${state.dest}`),
     el('p', {}, `Move the ${files.length} exported file${files.length > 1 ? 's' : ''} in ${SUB.textured}\\ (last made ${new Date(when).toLocaleString()}) to ${SUB.archive}\\${stamp(when)}\\, keeping their folders?`),
     pathTree(files.map(f => rel(f.path)), (p, depth) => depth === 0),
     el('p', { class: 'muted' }, `${SUB.project}\\ (the variations and shared settings) and ${SUB.original}\\ stay where they are.`)),
