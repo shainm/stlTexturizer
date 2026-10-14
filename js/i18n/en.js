@@ -11,6 +11,7 @@ export default {
   "dropHint.text": "Drop an <strong>.stl</strong>, <strong>.obj</strong>, <strong>.3mf</strong> or <strong>.step</strong> file here<br/>or <label for=\"stl-file-input\" class=\"link-label\">click to browse</label>",
   "step.dialogTitle": "STEP Import",
   "step.modelSize": "Model size: {d} mm",
+  "step.splitPieces": "This STEP file contains {n} separate pieces.\n\nOK: import each piece as its own object (switch between them in the model bar and texture each one separately).\nCancel: keep them together as one model.",
   "step.custom": "Custom",
   "step.surfaceDeviation": "Surface deviation (mm)",
   "step.normalDeviation": "Normal deviation (°)",

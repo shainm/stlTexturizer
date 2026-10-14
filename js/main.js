@@ -3825,6 +3825,57 @@ function closeStepDialog() {
 
 let _importSeq = 0; // guards the shared progress bar against superseded imports
 
+/**
+ * Split a mesh into its disconnected shells (welded connectivity). Returns an
+ * array of geometries in the source's frame, largest first, or null when the
+ * mesh is a single piece. Slivers under 4 triangles can't be real parts and
+ * are dropped.
+ */
+function _splitShells(geometry) {
+  const { shellId, shellCount } = buildAdjacency(geometry);
+  if (shellCount < 2) return null;
+  const pos = geometry.attributes.position.array;
+  const nor = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+  const counts = new Int32Array(shellCount);
+  for (let i = 0; i < shellId.length; i++) if (shellId[i] >= 0) counts[shellId[i]]++;
+  const order = [...counts.keys()].filter(s => counts[s] >= 4).sort((a, b) => counts[b] - counts[a]);
+  if (order.length < 2) return null;
+  const slot = new Int32Array(shellCount).fill(-1);
+  const outPos = order.map((s, k) => { slot[s] = k; return new Float32Array(counts[s] * 9); });
+  const outNor = nor ? order.map(s => new Float32Array(counts[s] * 9)) : null;
+  const fill = new Int32Array(order.length);
+  for (let t = 0; t < shellId.length; t++) {
+    const k = shellId[t] >= 0 ? slot[shellId[t]] : -1;
+    if (k < 0) continue;
+    const o = fill[k]++ * 9;
+    outPos[k].set(pos.subarray(t * 9, t * 9 + 9), o);
+    if (outNor) outNor[k].set(nor.subarray(t * 9, t * 9 + 9), o);
+  }
+  return outPos.map((p, k) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+    if (outNor) g.setAttribute('normal', new THREE.BufferAttribute(outNor[k], 3));
+    g.computeBoundingBox();
+    return g;
+  });
+}
+
+/** The loaded model is piece 1 of a split STEP: add the other pieces to the project as models. */
+function _addStepPieces(file, pieces) {
+  _ensureActiveModel();
+  const first = _models.items.find(m => m.id === _models.activeId);
+  const base = currentStlName;
+  if (first) first.name = `${base} 1`;
+  currentStlName = `${base} 1`;
+  // Pieces share the loaded model's frame, so the STL bytes (file coordinates) restore each one in place.
+  for (let k = 1; k < pieces.length; k++) {
+    _models.items.push({ id: _models.nextId++, name: `${base} ${k + 1}`, stl: _geometryToBinarySTL(pieces[k], true) });
+    pieces[k].dispose();
+  }
+  _renderModelBar();
+  _scheduleSessionSave();
+}
+
 async function handleModelFile(file, stepSettings = null) {
   const isStep = /\.(step|stp)$/i.test(file.name);
   // A STEP file without chosen settings goes through the import dialog first;
@@ -3840,8 +3891,20 @@ async function handleModelFile(file, stepSettings = null) {
     importProgress.classList.remove('hidden');
   }
   try {
-    const { geometry, bounds, nanCount, degenerateCount, originOffset, step } =
+    let { geometry, bounds, nanCount, degenerateCount, originOffset, step } =
       await loadModelFile(file, { settings: stepSettings, onProgress: _setImportProgress });
+
+    // A STEP assembly holds several disconnected pieces: offer to import each
+    // as its own object (the project's model list) so they texture separately.
+    let stepPieces = null;
+    if (isStep && mySeq === _importSeq) {
+      const split = _splitShells(geometry);
+      if (split && confirm(t('step.splitPieces', { n: split.length }))) {
+        stepPieces = split;
+        geometry = split[0];
+        bounds = computeBounds(geometry);
+      }
+    }
 
     // Invalidate any in-flight async operations tied to the previous model
     cancelDisplacementPreviewBuild();
@@ -3984,6 +4047,7 @@ async function handleModelFile(file, stepSettings = null) {
     updateSmartResBtnState();
     updatePreview();
     _modelLoaded(file);
+    if (stepPieces) _addStepPieces(file, stepPieces);
     return true;
   } catch (err) {
     // A superseded STEP import (user dropped another file mid-tessellation)
